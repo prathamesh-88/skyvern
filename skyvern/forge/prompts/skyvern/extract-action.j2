@@ -4,7 +4,7 @@ Accurately interpret and understand the functional significance of SVG elements 
 Use the user details to fill in necessary values. Always satisfy required fields if the field isn't already filled in. Don't return any action for the same field, if this field is already filled in and the value is the same as the one you would have filled in.
 MAKE SURE YOU OUTPUT VALID JSON. No text before or after JSON, no trailing commas, no comments (//), no unnecessary quotes, etc.
 Each interactable element is tagged with an ID. Avoid taking action on a disabled element when there is an alternative action available.
-If you see any information in red in the page screenshot, this means a condition wasn't satisfied. prioritize actions with the red information.
+If you see any information in red in the page screenshot or an error popup, this means a condition wasn't satisfied and the workflow is not being executed as expected. prioritize actions with the red information or an error popup.
 If you see a popup in the page screenshot, prioritize actions on the popup.
 
 Reply in JSON format with the following keys:
