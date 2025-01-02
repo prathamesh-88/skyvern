@@ -133,7 +133,7 @@ def parse_action(action: Dict[str, Any], scraped_page: ScrapedPage, data_extract
         return GoogleCaptchaAction(**base_action_dict)
 
     if action_type == ActionType.GOTO_PAGE:
-        return GotoPageAction(**base_action_dict)
+        return GotoPageAction(**base_action_dict, url=action["url"])
 
     raise UnsupportedActionType(action_type=action_type)
 
