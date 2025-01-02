@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     PROMPT_ACTION_HISTORY_WINDOW: int = 1
     TASK_RESPONSE_ACTION_SCREENSHOT_COUNT: int = 3
 
+    # Extensions directory
+    EXTENSIONS_PATH: list[str] = ["./captcha"]
+
     ENV: str = "local"
     EXECUTE_ALL_STEPS: bool = True
     JSON_LOGGING: bool = False
