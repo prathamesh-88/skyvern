@@ -689,9 +689,6 @@ class ForgeAgent:
                 and task_block.cache_actions
                 and (actions := await retrieve_action_plan(task, step, scraped_page))
             ):
-                print(task, 'task')
-                print(step, 'step')
-                print(scraped_page, 'scraped_page')
                 using_cached_action_plan = True
             else:
                 self.async_operation_pool.run_operation(task.task_id, AgentPhase.llm)

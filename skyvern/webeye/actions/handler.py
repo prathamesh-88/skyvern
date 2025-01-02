@@ -2,8 +2,10 @@ import asyncio
 import copy
 import json
 import os
-import urllib.parse
 import uuid
+import openai
+import base64
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List
@@ -376,19 +378,79 @@ async def handle_solve_captcha_action(
     task: Task,
     step: Step,
 ) -> list[ActionResult]:
+    element_id = action.skyvern_element_data['id']
     if action.action_type == 'solve_captcha':
-        if not action.response:
+        if not element_id and not action.response:
             return [ActionSuccess()]
+        elif element_id and not action.response:
+            dom = DomUtil(scraped_page, page)
+            skyvern_element = await dom.get_skyvern_element_by_id(element_id)
+            skyvern_frame = await SkyvernFrame.create_instance(skyvern_element.get_frame())
 
-        action = InputTextAction(
-            element_id=action.skyvern_element_data['id'],
-            action_type=ActionType.INPUT_TEXT,
-            text=action.response
-        )
-        await handle_input_text_action(action, page, scraped_page, task, step)
+            await skyvern_element.scroll_into_view()
+
+            img_path = f"./images/{uuid.uuid4()}.png"
+            await skyvern_frame.take_screenshot(page, False, img_path)
+
+            with open(img_path, "rb") as img_file:
+                image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+
+            response = client.chat.completions.create(
+                model='gpt-4o',
+                temperature=0.0,
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "You are an AI anti-spam text extractor. I will be providing you an image and your task is to analyze the image and return the anti-spam word. The output format will be json: {{'text': '<determined_anti_spam_word> OR NO'}}"
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            )
+            output = response.choices[0].message.content
+
+            output = output.replace("```json", "").replace("```", "")
+            formatted_output = json.loads(output)
+
+            try:
+                os.remove(img_path)
+                print(f"Image at {img_path} deleted successfully.")
+            except FileNotFoundError:
+                print(f"Image at {img_path} not found.")
+            except Exception as e:
+                print(f"An error occurred while deleting the image: {e}")
+
+            action = InputTextAction(
+                element_id=action.skyvern_element_data['id'],
+                action_type=ActionType.INPUT_TEXT,
+                text=formatted_output["text"]
+            )
+            await handle_input_text_action(action, page, scraped_page, task, step)
+
+            return [ActionSuccess()]
+        else:
+            action = InputTextAction(
+                element_id=action.skyvern_element_data['id'],
+                action_type=ActionType.INPUT_TEXT,
+                text=action.response
+            )
+            await handle_input_text_action(action, page, scraped_page, task, step)
+
+            return [ActionSuccess()]
     elif action.action_type == 'google_captcha':
         LOG.info("I have done google captcha...")
-        await asyncio.sleep(30)
+        await asyncio.sleep(15)
 
     return [ActionSuccess()]
 
