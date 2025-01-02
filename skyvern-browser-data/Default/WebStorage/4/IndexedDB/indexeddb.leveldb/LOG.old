@@ -1,0 +1,7 @@
+2024/12/31-17:19:45.505 a503 Reusing MANIFEST /Users/piyushedra/Desktop/edralabs/skyvern-pro/skyvern-browser-data/Default/WebStorage/4/IndexedDB/indexeddb.leveldb/MANIFEST-000001
+2024/12/31-17:19:45.505 a503 Recovering log #3
+2024/12/31-17:19:45.505 a503 Reusing old log /Users/piyushedra/Desktop/edralabs/skyvern-pro/skyvern-browser-data/Default/WebStorage/4/IndexedDB/indexeddb.leveldb/000003.log 
+2024/12/31-17:19:45.516 b103 Level-0 table #5: started
+2024/12/31-17:19:45.521 b103 Level-0 table #5: 4718 bytes OK
+2024/12/31-17:19:45.527 b103 Delete type=0 #3
+2024/12/31-17:19:45.528 a503 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)

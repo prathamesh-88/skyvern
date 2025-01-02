@@ -171,6 +171,10 @@ class BrowserContextFactory:
 
     @staticmethod
     def build_browser_args(proxy_location: ProxyLocation | None = None) -> dict[str, Any]:
+
+        disable_extensions_except = ",".join(settings.EXTENSIONS_PATH)
+        load_extensions = ",".join(settings.EXTENSIONS_PATH)
+
         video_dir = f"{settings.VIDEO_PATH}/{datetime.utcnow().strftime('%Y-%m-%d')}"
         har_dir = (
             f"{settings.HAR_PATH}/{datetime.utcnow().strftime('%Y-%m-%d')}/{BrowserContextFactory.get_subdir()}.har"
@@ -183,6 +187,8 @@ class BrowserContextFactory:
                 "--disk-cache-size=1",
                 "--start-maximized",
                 "--kiosk-printing",
+                f"--disable-extensions-except={disable_extensions_except}",
+                f"--load-extension={load_extensions}"
             ],
             "ignore_default_args": [
                 "--enable-automation",

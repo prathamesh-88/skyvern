@@ -75,6 +75,7 @@ from skyvern.webeye.actions.actions import (
     SelectOptionAction,
     UploadFileAction,
     WebAction,
+    InputTextAction,
 )
 from skyvern.webeye.actions.responses import (
     ActionAbort,
@@ -375,11 +376,20 @@ async def handle_solve_captcha_action(
     task: Task,
     step: Step,
 ) -> list[ActionResult]:
-    LOG.warning(
-        "Please solve the captcha on the page, you have 30 seconds",
-        action=action,
-    )
-    await asyncio.sleep(30)
+    if action.action_type == 'solve_captcha':
+        if not action.response:
+            return [ActionSuccess()]
+
+        action = InputTextAction(
+            element_id=action.skyvern_element_data['id'],
+            action_type=ActionType.INPUT_TEXT,
+            text=action.response
+        )
+        await handle_input_text_action(action, page, scraped_page, task, step)
+    elif action.action_type == 'google_captcha':
+        LOG.info("I have done google captcha...")
+        await asyncio.sleep(30)
+
     return [ActionSuccess()]
 
 
@@ -1378,6 +1388,7 @@ async def handle_complete_action(
 ActionHandler.register_action_type(
     ActionType.SOLVE_CAPTCHA, handle_solve_captcha_action
 )
+ActionHandler.register_action_type(ActionType.GOOGLE_CAPTCHA, handle_solve_captcha_action)
 ActionHandler.register_action_type(ActionType.CLICK, handle_click_action)
 ActionHandler.register_action_type(ActionType.INPUT_TEXT, handle_input_text_action)
 ActionHandler.register_action_type(ActionType.UPLOAD_FILE, handle_upload_file_action)
