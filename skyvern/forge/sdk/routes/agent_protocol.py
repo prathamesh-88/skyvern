@@ -724,6 +724,7 @@ async def get_workflow_run(
         workflow_permanent_id=workflow_id,
         workflow_run_id=workflow_run_id,
         organization_id=current_org.organization_id,
+        include_cost=True,
     )
 
 
@@ -1083,11 +1084,17 @@ async def observer_cruise(
     if x_max_iterations_override:
         LOG.info("Overriding max iterations for observer", max_iterations_override=x_max_iterations_override)
 
-    observer_cruise = await observer_service.initialize_observer_cruise(
-        organization=organization,
-        user_prompt=data.user_prompt,
-        user_url=str(data.url) if data.url else None,
-    )
+    try:
+        observer_cruise = await observer_service.initialize_observer_cruise(
+            organization=organization,
+            user_prompt=data.user_prompt,
+            user_url=str(data.url) if data.url else None,
+        )
+    except LLMProviderError:
+        LOG.error("LLM failure to initialize observer cruise", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Skyvern LLM failure to initialize observer cruise. Please try again later."
+        )
     analytics.capture("skyvern-oss-agent-observer-cruise", data={"url": observer_cruise.url})
     await AsyncExecutorFactory.get_executor().execute_cruise(
         request=request,
@@ -1096,4 +1103,16 @@ async def observer_cruise(
         observer_cruise_id=observer_cruise.observer_cruise_id,
         max_iterations_override=x_max_iterations_override,
     )
+    return observer_cruise
+
+
+@base_router.get("/cruise/{observer_cruise_id}")
+@base_router.get("/cruise/{observer_cruise_id}/", include_in_schema=False)
+async def get_observer_cruise(
+    observer_cruise_id: str,
+    organization: Organization = Depends(org_auth_service.get_current_org),
+) -> ObserverCruise:
+    observer_cruise = await observer_service.get_observer_cruise(observer_cruise_id, organization.organization_id)
+    if not observer_cruise:
+        raise HTTPException(status_code=404, detail=f"Observer cruise {observer_cruise_id} not found")
     return observer_cruise

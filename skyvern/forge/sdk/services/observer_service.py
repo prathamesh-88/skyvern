@@ -6,6 +6,7 @@ from typing import Any
 
 import structlog
 from pydantic import BaseModel
+from sqlalchemy.exc import OperationalError
 
 from skyvern.exceptions import UrlGenerationFailure
 from skyvern.forge import app
@@ -95,7 +96,7 @@ async def initialize_observer_cruise(
     metadata_response = await app.SECONDARY_LLM_API_HANDLER(prompt=metadata_prompt, observer_thought=observer_thought)
     # validate
     LOG.info(f"Initialized observer initial response: {metadata_response}")
-    url: str = metadata_response.get("url", "")
+    url: str = user_url or metadata_response.get("url", "")
     if not url:
         raise UrlGenerationFailure()
     title: str = metadata_response.get("title", DEFAULT_WORKFLOW_TITLE)
@@ -109,34 +110,57 @@ async def initialize_observer_cruise(
 
     # create workflow and workflow run
     max_steps_override = 10
-    new_workflow = await app.WORKFLOW_SERVICE.create_empty_workflow(organization, metadata.workflow_title)
-    workflow_run = await app.WORKFLOW_SERVICE.setup_workflow_run(
-        request_id=None,
-        workflow_request=WorkflowRequestBody(),
-        workflow_permanent_id=new_workflow.workflow_permanent_id,
-        organization_id=organization.organization_id,
-        version=None,
-        max_steps_override=max_steps_override,
-    )
-    await app.DATABASE.update_observer_thought(
-        observer_thought_id=observer_thought.observer_thought_id,
-        organization_id=organization.organization_id,
-        workflow_run_id=workflow_run.workflow_run_id,
-        workflow_id=new_workflow.workflow_id,
-        workflow_permanent_id=new_workflow.workflow_permanent_id,
-        thought=metadata_response.get("thoughts", ""),
-        output=metadata.model_dump(),
-    )
+    try:
+        new_workflow = await app.WORKFLOW_SERVICE.create_empty_workflow(organization, metadata.workflow_title)
+        workflow_run = await app.WORKFLOW_SERVICE.setup_workflow_run(
+            request_id=None,
+            workflow_request=WorkflowRequestBody(),
+            workflow_permanent_id=new_workflow.workflow_permanent_id,
+            organization_id=organization.organization_id,
+            version=None,
+            max_steps_override=max_steps_override,
+        )
+    except Exception:
+        LOG.error("Failed to setup cruise workflow run", exc_info=True)
+        # fail the workflow run
+        await app.WORKFLOW_SERVICE.mark_workflow_run_as_failed(
+            workflow_run_id=workflow_run.workflow_run_id,
+            failure_reason="Skyvern failed to setup the workflow run",
+        )
+        raise
+
+    try:
+        await app.DATABASE.update_observer_thought(
+            observer_thought_id=observer_thought.observer_thought_id,
+            organization_id=organization.organization_id,
+            workflow_run_id=workflow_run.workflow_run_id,
+            workflow_id=new_workflow.workflow_id,
+            workflow_permanent_id=new_workflow.workflow_permanent_id,
+            thought=metadata_response.get("thoughts", ""),
+            output=metadata.model_dump(),
+        )
+    except Exception:
+        LOG.warning("Failed to update observer thought", exc_info=True)
 
     # update oserver cruise
-    observer_cruise = await app.DATABASE.update_observer_cruise(
-        observer_cruise_id=observer_cruise.observer_cruise_id,
-        workflow_run_id=workflow_run.workflow_run_id,
-        workflow_id=new_workflow.workflow_id,
-        workflow_permanent_id=new_workflow.workflow_permanent_id,
-        url=url,
-        organization_id=organization.organization_id,
-    )
+    try:
+        observer_cruise = await app.DATABASE.update_observer_cruise(
+            observer_cruise_id=observer_cruise.observer_cruise_id,
+            workflow_run_id=workflow_run.workflow_run_id,
+            workflow_id=new_workflow.workflow_id,
+            workflow_permanent_id=new_workflow.workflow_permanent_id,
+            url=url,
+            organization_id=organization.organization_id,
+        )
+    except Exception:
+        LOG.warning("Failed to update observer cruise", exc_info=True)
+        # fail the workflow run
+        await app.WORKFLOW_SERVICE.mark_workflow_run_as_failed(
+            workflow_run_id=workflow_run.workflow_run_id,
+            failure_reason="Skyvern failed to update the observer cruise after initializing the workflow run",
+        )
+        raise
+
     return observer_cruise
 
 
@@ -147,10 +171,65 @@ async def run_observer_cruise(
     max_iterations_override: str | int | None = None,
 ) -> None:
     organization_id = organization.organization_id
-    observer_cruise = await app.DATABASE.get_observer_cruise(observer_cruise_id, organization_id=organization_id)
+    try:
+        observer_cruise = await app.DATABASE.get_observer_cruise(observer_cruise_id, organization_id=organization_id)
+    except Exception:
+        LOG.error(
+            "Failed to get observer cruise",
+            observer_cruise_id=observer_cruise_id,
+            organization_id=organization_id,
+            exc_info=True,
+        )
+        await mark_observer_cruise_as_failed(observer_cruise_id, organization_id=organization_id)
+        return None
     if not observer_cruise:
         LOG.error("Observer cruise not found", observer_cruise_id=observer_cruise_id, organization_id=organization_id)
         return None
+
+    try:
+        workflow, workflow_run = await run_observer_cruise_helper(
+            organization=organization,
+            observer_cruise=observer_cruise,
+            request_id=request_id,
+            max_iterations_override=max_iterations_override,
+        )
+    except OperationalError:
+        LOG.error("Database error when running observer cruise", exc_info=True)
+        await mark_observer_cruise_as_failed(
+            observer_cruise_id,
+            workflow_run_id=observer_cruise.workflow_run_id,
+            failure_reason="Database error when running cruise",
+            organization_id=organization_id,
+        )
+        return
+    except Exception:
+        LOG.error("Failed to run observer cruise", exc_info=True)
+        await mark_observer_cruise_as_failed(
+            observer_cruise_id,
+            workflow_run_id=observer_cruise.workflow_run_id,
+            # TODO: add better failure reason
+            failure_reason="Failed to run observer cruise",
+            organization_id=organization_id,
+        )
+        return
+
+    await app.DATABASE.update_observer_cruise(
+        observer_cruise_id=observer_cruise_id,
+        organization_id=organization_id,
+        status=ObserverCruiseStatus.completed,
+    )
+    if workflow and workflow_run:
+        await app.WORKFLOW_SERVICE.clean_up_workflow(workflow=workflow, workflow_run=workflow_run)
+
+
+async def run_observer_cruise_helper(
+    organization: Organization,
+    observer_cruise: ObserverCruise,
+    request_id: str | None = None,
+    max_iterations_override: str | int | None = None,
+) -> tuple[Workflow, WorkflowRun] | tuple[None, None]:
+    organization_id = organization.organization_id
+    observer_cruise_id = observer_cruise.observer_cruise_id
     if observer_cruise.status != ObserverCruiseStatus.queued:
         LOG.error(
             "Observer cruise is not queued. Duplicate observer cruise",
@@ -158,21 +237,21 @@ async def run_observer_cruise(
             status=observer_cruise.status,
             organization_id=organization_id,
         )
-        return None
+        return None, None
     if not observer_cruise.url or not observer_cruise.prompt:
         LOG.error(
             "Observer cruise url or prompt not found",
             observer_cruise_id=observer_cruise_id,
             organization_id=organization_id,
         )
-        return None
+        return None, None
     if not observer_cruise.workflow_run_id:
         LOG.error(
             "Workflow run id not found in observer cruise",
             observer_cruise_id=observer_cruise_id,
             organization_id=organization_id,
         )
-        return None
+        return None, None
 
     int_max_iterations_override = None
     if max_iterations_override:
@@ -190,21 +269,19 @@ async def run_observer_cruise(
     workflow_run = await app.WORKFLOW_SERVICE.get_workflow_run(workflow_run_id, organization_id=organization_id)
     if not workflow_run:
         LOG.error("Workflow run not found", workflow_run_id=workflow_run_id)
-        return None
+        return None, None
     else:
         LOG.info("Workflow run found", workflow_run_id=workflow_run_id)
 
     if workflow_run.status != WorkflowRunStatus.queued:
         LOG.warning("Duplicate workflow run execution", workflow_run_id=workflow_run_id, status=workflow_run.status)
-        return None
+        return None, None
 
     workflow_id = workflow_run.workflow_id
     workflow = await app.WORKFLOW_SERVICE.get_workflow(workflow_id, organization_id=organization_id)
     if not workflow:
         LOG.error("Workflow not found", workflow_id=workflow_id)
-        return None
-    else:
-        LOG.info("Workflow found", workflow_id=workflow_id)
+        return None, None
 
     ###################### run observer ######################
 
@@ -449,13 +526,7 @@ async def run_observer_cruise(
                 )
                 await app.WORKFLOW_SERVICE.mark_workflow_run_as_completed(workflow_run_id=workflow_run_id)
                 break
-
-    await app.DATABASE.update_observer_cruise(
-        observer_cruise_id=observer_cruise_id,
-        organization_id=organization_id,
-        status=ObserverCruiseStatus.completed,
-    )
-    await app.WORKFLOW_SERVICE.clean_up_workflow(workflow=workflow, workflow_run=workflow_run)
+    return workflow, workflow_run
 
 
 async def handle_block_result(
@@ -675,27 +746,31 @@ async def _generate_loop_task(
     task_parameters: list[PARAMETER_TYPE] = []
     if output_value_obj.is_loop_value_link:
         LOG.info("Loop values are links", loop_values=output_value_obj.loop_values)
-        # create ContextParameter for the value
-        url_value_context_parameter = ContextParameter(
-            key="task_in_loop_url",
-            source=loop_for_context_parameter,
-        )
-        task_parameters.append(url_value_context_parameter)
-        for_loop_parameter_yaml_list.append(
-            ContextParameterYAML(
-                key=url_value_context_parameter.key,
-                description=url_value_context_parameter.description,
-                source_parameter_key=loop_for_context_parameter.key,
-            )
-        )
-        app.WORKFLOW_CONTEXT_MANAGER.add_context_parameter(workflow_run_id, url_value_context_parameter)
         url = "task_in_loop_url"
+        context_parameter_key = "task_in_loop_url"
     else:
         LOG.info("Loop values are not links", loop_values=output_value_obj.loop_values)
         page = await browser_state.get_working_page()
         url = str(
             await SkyvernFrame.evaluate(frame=page, expression="() => document.location.href") if page else original_url
         )
+        context_parameter_key = "target"
+
+    # create ContextParameter for the value
+    url_value_context_parameter = ContextParameter(
+        key=context_parameter_key,
+        source=loop_for_context_parameter,
+    )
+    task_parameters.append(url_value_context_parameter)
+    for_loop_parameter_yaml_list.append(
+        ContextParameterYAML(
+            key=url_value_context_parameter.key,
+            description=url_value_context_parameter.description,
+            source_parameter_key=loop_for_context_parameter.key,
+        )
+    )
+    app.WORKFLOW_CONTEXT_MANAGER.add_context_parameter(workflow_run_id, url_value_context_parameter)
+
     task_in_loop_label = f"task_in_loop_{_generate_random_string()}"
     context = skyvern_context.ensure_context()
     task_in_loop_metadata_prompt = prompt_engine.load_prompt(
@@ -919,3 +994,22 @@ async def _record_thought_screenshot(observer_thought: ObserverThought, workflow
         artifact_type=ArtifactType.SCREENSHOT_LLM,
         data=screenshot,
     )
+
+
+async def get_observer_cruise(observer_cruise_id: str, organization_id: str | None = None) -> ObserverCruise | None:
+    return await app.DATABASE.get_observer_cruise(observer_cruise_id, organization_id=organization_id)
+
+
+async def mark_observer_cruise_as_failed(
+    observer_cruise_id: str,
+    workflow_run_id: str | None = None,
+    failure_reason: str | None = None,
+    organization_id: str | None = None,
+) -> None:
+    await app.DATABASE.update_observer_cruise(
+        observer_cruise_id, organization_id=organization_id, status=ObserverCruiseStatus.failed
+    )
+    if workflow_run_id:
+        await app.WORKFLOW_SERVICE.mark_workflow_run_as_failed(
+            workflow_run_id, failure_reason=failure_reason or "Observer cruise failed"
+        )
