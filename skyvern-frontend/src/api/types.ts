@@ -139,10 +139,12 @@ export const ActionTypes = {
   Click: "click",
   SelectOption: "select_option",
   UploadFile: "upload_file",
+  GotoPage: "goto_page",
   complete: "complete",
   wait: "wait",
   terminate: "terminate",
   SolveCaptcha: "solve_captcha",
+  GoogleCaptcha: "google_captcha"
 } as const;
 
 export type ActionType = (typeof ActionTypes)[keyof typeof ActionTypes];
@@ -154,10 +156,12 @@ export const ReadableActionTypes: {
   click: "Click",
   select_option: "Select Option",
   upload_file: "Upload File",
+  goto_page: "Goto Page",
   complete: "Complete",
   wait: "Wait",
   terminate: "Terminate",
   solve_captcha: "Solve Captcha",
+  "google_captcha": "Google Captcha"
 };
 
 export type Option = {
