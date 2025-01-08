@@ -144,7 +144,7 @@ export const ActionTypes = {
   wait: "wait",
   terminate: "terminate",
   SolveCaptcha: "solve_captcha",
-  GoogleCaptcha: "google_captcha"
+  GoogleCaptcha: "google_captcha",
 } as const;
 
 export type ActionType = (typeof ActionTypes)[keyof typeof ActionTypes];
@@ -161,7 +161,7 @@ export const ReadableActionTypes: {
   wait: "Wait",
   terminate: "Terminate",
   solve_captcha: "Solve Captcha",
-  "google_captcha": "Google Captcha"
+  google_captcha: "Google Captcha",
 };
 
 export type Option = {
@@ -215,6 +215,9 @@ export type WorkflowRunStatusApiResponse = {
   outputs: Record<string, unknown> | null;
   failure_reason: string | null;
   downloaded_file_urls: Array<string> | null;
+  total_steps: number | null;
+  total_cost: number | null;
+  observer_cruise: ObserverCruise | null;
 };
 
 export type TaskGenerationApiResponse = {

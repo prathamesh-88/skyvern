@@ -19,6 +19,7 @@ from skyvern.config import settings
 from skyvern.constants import (
     AUTO_COMPLETION_POTENTIAL_VALUES_COUNT,
     BROWSER_DOWNLOAD_TIMEOUT,
+    DROPDOWN_MENU_MAX_DISTANCE,
     REPO_ROOT_DIR,
     SKYVERN_ID_ATTR,
 )
@@ -738,6 +739,16 @@ async def handle_input_text_action(
         # press arrowdown to watch if there's any options popping up
         await incremental_scraped.start_listen_dom_increment()
         try:
+            await skyvern_element.input_clear()
+        except Exception:
+            LOG.info(
+                "Failed to clear up the input, but continue to input",
+                task_id=task.task_id,
+                step_id=step.step_id,
+                element_id=skyvern_element.get_id(),
+            )
+
+        try:
             await skyvern_element.press_key("ArrowDown")
         except TimeoutError:
             # sometimes we notice `press_key()` raise a timeout but actually the dropdown is opened.
@@ -773,6 +784,7 @@ async def handle_input_text_action(
                     action=select_action,
                     page=page,
                     dom=dom,
+                    skyvern_element=skyvern_element,
                     skyvern_frame=skyvern_frame,
                     incremental_scraped=incremental_scraped,
                     step=step,
@@ -801,14 +813,29 @@ async def handle_input_text_action(
                     )
 
             except Exception:
-                await skyvern_element.scroll_into_view()
                 LOG.warning(
                     "Failed to do custom selection transformed from input action, continue to input text",
                     exc_info=True,
                     task_id=task.task_id,
                     step_id=step.step_id,
                 )
+                await skyvern_element.scroll_into_view()
             finally:
+                blocking_element, exist = await skyvern_element.find_blocking_element(
+                    dom=dom, incremental_page=incremental_scraped
+                )
+                if blocking_element and exist:
+                    LOG.info(
+                        "Find a blocking element to the current element, going to blur the blocking element first",
+                        task_id=task.task_id,
+                        step_id=step.step_id,
+                        blocking_element=blocking_element.get_locator(),
+                    )
+                    if await blocking_element.get_locator().count():
+                        await blocking_element.press_key("Escape")
+                    if await blocking_element.get_locator().count():
+                        await blocking_element.blur()
+
                 await skyvern_element.press_key("Escape")
                 await skyvern_element.blur()
                 await incremental_scraped.stop_listen_dom_increment()
@@ -830,13 +857,32 @@ async def handle_input_text_action(
             ]
         except Exception:
             LOG.warning("Failed to clear the input field", action=action, exc_info=True)
-            return [
-                ActionFailure(
-                    InvalidElementForTextInput(
-                        element_id=action.element_id, tag_name=tag_name
-                    )
-                )
-            ]
+
+            # some <span> is supported to use `locator.press_sequentially()` to fill in the data
+            if skyvern_element.get_tag_name() != "span":
+                return [ActionFailure(InvalidElementForTextInput(element_id=action.element_id, tag_name=tag_name))]
+
+            await skyvern_element.press_fill(text=text)
+            return [ActionSuccess()]
+
+    # wait 2s for blocking element to show up
+    await asyncio.sleep(2)
+    try:
+        blocking_element, exist = await skyvern_element.find_blocking_element(
+            dom=dom, incremental_page=incremental_scraped
+        )
+        if blocking_element and exist:
+            LOG.warning(
+                "Find a blocking element to the current element, going to input on the blocking element",
+            )
+            skyvern_element = blocking_element
+    except Exception:
+        LOG.info(
+            "Failed to find the blocking element, continue with the orignal element",
+            exc_info=True,
+            task_id=task.task_id,
+            step_id=step.step_id,
+        )
 
     try:
         # TODO: not sure if this case will trigger auto-completion
@@ -1242,6 +1288,7 @@ async def handle_select_option_action(
             action=action,
             page=page,
             dom=dom,
+            skyvern_element=skyvern_element,
             skyvern_frame=skyvern_frame,
             incremental_scraped=incremental_scraped,
             step=step,
@@ -1297,6 +1344,7 @@ async def handle_select_option_action(
             value=suggested_value,
             page=page,
             dom=dom,
+            skyvern_element=skyvern_element,
             skyvern_frame=skyvern_frame,
             incremental_scraped=incremental_scraped,
             task=task,
@@ -2057,6 +2105,7 @@ async def sequentially_select_from_dropdown(
     action: SelectOptionAction,
     page: Page,
     dom: DomUtil,
+    skyvern_element: SkyvernElement,
     skyvern_frame: SkyvernFrame,
     incremental_scraped: IncrementalScrapePage,
     step: Step,
@@ -2104,6 +2153,7 @@ async def sequentially_select_from_dropdown(
         single_select_result = await select_from_dropdown(
             context=input_or_select_context,
             page=page,
+            skyvern_element=skyvern_element,
             skyvern_frame=skyvern_frame,
             incremental_scraped=incremental_scraped,
             check_exist_funcs=check_exist_funcs,
@@ -2191,6 +2241,7 @@ def build_sequential_select_history(
 async def select_from_dropdown(
     context: InputOrSelectContext,
     page: Page,
+    skyvern_element: SkyvernElement,
     skyvern_frame: SkyvernFrame,
     incremental_scraped: IncrementalScrapePage,
     check_exist_funcs: list[CheckExistIDFunc],
@@ -2215,6 +2266,7 @@ async def select_from_dropdown(
 
     if dropdown_menu_element is None:
         dropdown_menu_element = await locate_dropdown_menu(
+            current_anchor_element=skyvern_element,
             incremental_scraped=incremental_scraped,
             step=step,
             task=task,
@@ -2384,6 +2436,7 @@ async def select_from_dropdown(
 async def select_from_dropdown_by_value(
     value: str,
     page: Page,
+    skyvern_element: SkyvernElement,
     skyvern_frame: SkyvernFrame,
     dom: DomUtil,
     incremental_scraped: IncrementalScrapePage,
@@ -2405,6 +2458,7 @@ async def select_from_dropdown_by_value(
 
     if dropdown_menu_element is None:
         dropdown_menu_element = await locate_dropdown_menu(
+            current_anchor_element=skyvern_element,
             incremental_scraped=incremental_scraped,
             step=step,
             task=task,
@@ -2465,6 +2519,7 @@ async def select_from_dropdown_by_value(
 
 
 async def locate_dropdown_menu(
+    current_anchor_element: SkyvernElement,
     incremental_scraped: IncrementalScrapePage,
     step: Step,
     task: Task,
@@ -2500,9 +2555,31 @@ async def locate_dropdown_menu(
             )
             continue
 
-        if not await skyvern_frame.get_element_visible(
-            await head_element.get_element_handler()
-        ):
+        try:
+            if not await head_element.is_next_to_element(
+                target_locator=current_anchor_element.get_locator(),
+                max_x_distance=DROPDOWN_MENU_MAX_DISTANCE,
+                max_y_distance=DROPDOWN_MENU_MAX_DISTANCE,
+            ):
+                LOG.debug(
+                    "Skip the element since it's too far away from the anchor element",
+                    step_id=step.step_id,
+                    task_id=task.task_id,
+                    element_id=element_id,
+                )
+                continue
+
+        except Exception:
+            LOG.info(
+                "Failed to calculate the distance between the elements",
+                element_id=element_id,
+                step_id=step.step_id,
+                task_id=task.task_id,
+                exc_info=True,
+            )
+            continue
+
+        if not await skyvern_frame.get_element_visible(await head_element.get_element_handler()):
             LOG.debug(
                 "Skip the element since it's invisible",
                 step_id=step.step_id,

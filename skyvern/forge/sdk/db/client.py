@@ -379,7 +379,7 @@ class AgentDB:
                     select(ActionModel)
                     .filter(ActionModel.organization_id == organization_id)
                     .filter(ActionModel.task_id.in_(task_ids))
-                    .order_by(ActionModel.created_at)
+                    .order_by(ActionModel.created_at.desc())
                 )
                 actions = (await session.scalars(query)).all()
                 return [Action.model_validate(action) for action in actions]
@@ -400,6 +400,7 @@ class AgentDB:
                         .filter_by(task_id=task_id)
                         .filter_by(organization_id=organization_id)
                         .order_by(StepModel.order.asc())
+                        .order_by(StepModel.retry_index.asc())
                     )
                 ).first():
                     return convert_to_step(step, debug_enabled=self.debug_enabled)
@@ -2132,14 +2133,25 @@ class AgentDB:
             task = await self.get_task(task_id, organization_id=organization_id)
         return convert_to_workflow_run_block(new_workflow_run_block, task=task)
 
+    async def delete_workflow_run_blocks(self, workflow_run_id: str, organization_id: str | None = None) -> None:
+        async with self.Session() as session:
+            stmt = delete(WorkflowRunBlockModel).where(
+                and_(
+                    WorkflowRunBlockModel.workflow_run_id == workflow_run_id,
+                    WorkflowRunBlockModel.organization_id == organization_id,
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
     async def update_workflow_run_block(
         self,
         workflow_run_block_id: str,
+        organization_id: str | None = None,
         status: BlockStatus | None = None,
         output: dict | list | str | None = None,
         failure_reason: str | None = None,
         task_id: str | None = None,
-        organization_id: str | None = None,
         loop_values: list | None = None,
         current_value: str | None = None,
         current_index: int | None = None,
@@ -2149,6 +2161,7 @@ class AgentDB:
         body: str | None = None,
         prompt: str | None = None,
         wait_sec: int | None = None,
+        description: str | None = None,
     ) -> WorkflowRunBlock:
         async with self.Session() as session:
             workflow_run_block = (
@@ -2185,6 +2198,8 @@ class AgentDB:
                     workflow_run_block.prompt = prompt
                 if wait_sec:
                     workflow_run_block.wait_sec = wait_sec
+                if description:
+                    workflow_run_block.description = description
                 await session.commit()
                 await session.refresh(workflow_run_block)
             else:
@@ -2227,7 +2242,7 @@ class AgentDB:
                     select(WorkflowRunBlockModel)
                     .filter_by(workflow_run_id=workflow_run_id)
                     .filter_by(organization_id=organization_id)
-                    .order_by(WorkflowRunBlockModel.created_at)
+                    .order_by(WorkflowRunBlockModel.created_at.desc())
                 )
             ).all()
             tasks = await self.get_tasks_by_workflow_run_id(workflow_run_id)

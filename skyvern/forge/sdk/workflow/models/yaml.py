@@ -142,8 +142,8 @@ class ForLoopBlockYAML(BlockYAML):
     # to infer the type of the parameter_type attribute.
     block_type: Literal[BlockType.FOR_LOOP] = BlockType.FOR_LOOP  # type: ignore
 
-    loop_over_parameter_key: str
     loop_blocks: list["BLOCK_YAML_SUBCLASSES"]
+    loop_over_parameter_key: str = ""
     loop_variable_reference: str | None = None
 
 
@@ -310,6 +310,11 @@ class FileDownloadBlockYAML(BlockYAML):
     cache_actions: bool = False
 
 
+class UrlBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.GOTO_URL] = BlockType.GOTO_URL  # type: ignore
+    url: str
+
+
 PARAMETER_YAML_SUBCLASSES = (
     AWSSecretParameterYAML
     | BitwardenLoginCredentialParameterYAML
@@ -337,6 +342,7 @@ BLOCK_YAML_SUBCLASSES = (
     | LoginBlockYAML
     | WaitBlockYAML
     | FileDownloadBlockYAML
+    | UrlBlockYAML
 )
 BLOCK_YAML_TYPES = Annotated[BLOCK_YAML_SUBCLASSES, Field(discriminator="block_type")]
 
