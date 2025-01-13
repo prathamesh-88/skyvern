@@ -188,7 +188,8 @@ class BrowserContextFactory:
                 "--start-maximized",
                 "--kiosk-printing",
                 f"--disable-extensions-except={disable_extensions_except}",
-                f"--load-extension={load_extensions}"
+                f"--load-extension={load_extensions}",
+                f"--user-agent={random.choice(USER_AGENT_STRINGS)}",
             ],
             "ignore_default_args": [
                 "--enable-automation",
@@ -199,7 +200,6 @@ class BrowserContextFactory:
                 "width": settings.BROWSER_WIDTH,
                 "height": settings.BROWSER_HEIGHT,
             },
-            "user_agent": random.choice(USER_AGENT_STRINGS),
             "java_script_enabled": True,
         }
 
