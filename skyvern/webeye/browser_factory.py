@@ -203,6 +203,15 @@ class BrowserContextFactory:
             "java_script_enabled": True,
         }
 
+        if settings.PROXY_URL:
+            args["proxy"] = {
+                "server": settings.PROXY_URL
+            }
+            args["http_credentials"] = {
+                "username": settings.PROXY_USERNAME,
+                "password": settings.PROXY_PASSWORD,
+            }
+
         if proxy_location:
             if tz_info := get_tzinfo_from_proxy(proxy_location=proxy_location):
                 args["timezone_id"] = tz_info.key

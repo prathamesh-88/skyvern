@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     ENABLE_LOG_ARTIFACTS: bool = False
     STREAMING_FILE_BASE_PATH: str = "./temp"
 
+    PROXY_URL: str | None = None
+    PROXY_USERNAME: str | None = None
+    PROXY_PASSWORD: str | None = None
+
     def is_cloud_environment(self) -> bool:
         """
         :return: True if env is not local, else False
