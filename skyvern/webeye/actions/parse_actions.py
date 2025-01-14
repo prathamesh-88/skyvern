@@ -20,6 +20,8 @@ from skyvern.webeye.actions.actions import (
     TerminateAction,
     UploadFileAction,
     WaitAction,
+    GoogleCaptchaAction,
+    GotoPageAction
 )
 from skyvern.webeye.scraper.scraper import ScrapedPage
 
@@ -126,6 +128,12 @@ def parse_action(action: Dict[str, Any], scraped_page: ScrapedPage, data_extract
 
     if action_type == ActionType.SOLVE_CAPTCHA:
         return SolveCaptchaAction(**base_action_dict)
+
+    if action_type == ActionType.GOOGLE_CAPTCHA:
+        return GoogleCaptchaAction(**base_action_dict)
+
+    if action_type == ActionType.GOTO_PAGE:
+        return GotoPageAction(**base_action_dict, url=action["url"])
 
     raise UnsupportedActionType(action_type=action_type)
 

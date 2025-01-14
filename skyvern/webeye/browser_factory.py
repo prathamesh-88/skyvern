@@ -5,12 +5,14 @@ import random
 import os
 import time
 import uuid
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 import aiofiles
 import structlog
+# from playwright_stealth import stealth_async
 from playwright.async_api import BrowserContext, ConsoleMessage, Download, Error, Page, Playwright
 from pydantic import BaseModel, PrivateAttr
 
@@ -37,6 +39,7 @@ USER_AGENT_STRINGS = [
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.3497.92 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
 ]
+
 
 
 BrowserCleanupFunc = Callable[[], None] | None
@@ -201,6 +204,7 @@ class BrowserContextFactory:
                 "width": settings.BROWSER_WIDTH,
                 "height": settings.BROWSER_HEIGHT,
             },
+            "java_script_enabled": True,
         }
 
         # if settings.PROXY_URL:
@@ -248,6 +252,10 @@ class BrowserContextFactory:
             if not creator:
                 raise UnknownBrowserType(browser_type)
             browser_context, browser_artifacts, cleanup_func = await creator(playwright, **kwargs)
+            # TODO: Hacky way to disable webdriver detection. Need to find a better way to do this
+            await browser_context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
             set_browser_console_log(browser_context=browser_context, browser_artifacts=browser_artifacts)
             set_download_file_listener(browser_context=browser_context, **kwargs)
 
@@ -326,7 +334,7 @@ def _get_cdp_port(kwargs: dict) -> int | None:
 async def _create_headless_chromium(
     playwright: Playwright, proxy_location: ProxyLocation | None = None, **kwargs: dict
 ) -> tuple[BrowserContext, BrowserArtifacts, BrowserCleanupFunc]:
-    user_data_dir = make_temp_directory(prefix="skyvern_browser_")
+    user_data_dir = "skyvern-browser-data/"
     download_dir = initialize_download_dir()
     BrowserContextFactory.update_chromium_browser_preferences(
         user_data_dir=user_data_dir,
@@ -349,7 +357,7 @@ async def _create_headless_chromium(
 async def _create_headful_chromium(
     playwright: Playwright, proxy_location: ProxyLocation | None = None, **kwargs: dict
 ) -> tuple[BrowserContext, BrowserArtifacts, BrowserCleanupFunc]:
-    user_data_dir = make_temp_directory(prefix="skyvern_browser_")
+    user_data_dir = "skyvern-browser-data/"
     download_dir = initialize_download_dir()
     BrowserContextFactory.update_chromium_browser_preferences(
         user_data_dir=user_data_dir,

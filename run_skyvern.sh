@@ -9,4 +9,4 @@ fi
 source "$(poetry env info --path)/bin/activate"
 poetry install
 ./run_alembic_check.sh
-poetry run python -m skyvern.forge
+poetry run python3.11 -m skyvern.forge

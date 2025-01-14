@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     PROMPT_ACTION_HISTORY_WINDOW: int = 1
     TASK_RESPONSE_ACTION_SCREENSHOT_COUNT: int = 3
 
+    # Extensions directory
+    EXTENSIONS_PATH: list[str] = ["./captcha"]
+
     ENV: str = "local"
     EXECUTE_ALL_STEPS: bool = True
     JSON_LOGGING: bool = False
@@ -137,6 +140,11 @@ class Settings(BaseSettings):
     SVG_MAX_LENGTH: int = 100000
 
     ENABLE_LOG_ARTIFACTS: bool = False
+    STREAMING_FILE_BASE_PATH: str = "./temp"
+
+    PROXY_URL: str | None = None
+    PROXY_USERNAME: str | None = None
+    PROXY_PASSWORD: str | None = None
 
     def is_cloud_environment(self) -> bool:
         """
