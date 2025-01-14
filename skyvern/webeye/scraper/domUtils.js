@@ -753,6 +753,17 @@ function isScrollableOverflow(element) {
   );
 }
 
+function isDatePickerSelector(element) {
+  const tagName = element.tagName.toLowerCase();
+  if (
+    tagName === "button" &&
+    element.getAttribute("data-testid")?.includes("date")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 const isComboboxDropdown = (element) => {
   if (element.tagName.toLowerCase() !== "input") {
     return false;
@@ -1197,6 +1208,7 @@ function buildElementObject(frame, element, interactable, purgeable = false) {
       elementTagNameLower === "svg" || element.closest("svg") !== null,
     isSelectable:
       elementTagNameLower === "select" ||
+      isDatePickerSelector(element) ||
       isDivComboboxDropdown(element) ||
       isDropdownButton(element) ||
       isAngularDropdown(element) ||
@@ -2120,15 +2132,26 @@ if (window.globalObserverForDOMIncrement === undefined) {
       }
 
       if (mutation.type === "childList") {
+        if (mutation.target.nodeType === Node.TEXT_NODE) continue;
+        const node = mutation.target;
         let changedNode = {
-          targetNode: mutation.target, // TODO: for future usage, when we want to parse new elements into a tree
+          targetNode: node, // TODO: for future usage, when we want to parse new elements into a tree
         };
         let newNodes = [];
-        if (mutation.addedNodes && mutation.addedNodes.length > 0) {
-          for (const node of mutation.addedNodes) {
-            // skip the text nodes, they won't be interactable
-            if (node.nodeType === Node.TEXT_NODE) continue;
-            newNodes.push(node);
+        if (
+          node.tagName.toLowerCase() === "ul" ||
+          (node.tagName.toLowerCase() === "div" &&
+            node.hasAttribute("role") &&
+            node.getAttribute("role").toLowerCase() === "listbox")
+        ) {
+          newNodes.push(node);
+        } else {
+          if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+            for (const node of mutation.addedNodes) {
+              // skip the text nodes, they won't be interactable
+              if (node.nodeType === Node.TEXT_NODE) continue;
+              newNodes.push(node);
+            }
           }
         }
         if (newNodes.length > 0) {

@@ -103,8 +103,8 @@ def json_to_html(element: dict, need_skyvern_attrs: bool = True) -> str:
     context = skyvern_context.ensure_context()
 
     # FIXME: Theoretically, all href links with over 69(64+1+4) length could be hashed
-    # but currently, just hash length>300 links to confirm the solution goes well
-    if "href" in attributes and len(attributes.get("href", "")) > 300:
+    # but currently, just hash length>150 links to confirm the solution goes well
+    if "href" in attributes and len(attributes.get("href", "")) > 150:
         href = attributes.get("href", "")
         # jinja style can't accept the variable name starts with number
         # adding "_" to make sure the variable name is valid.
@@ -575,6 +575,10 @@ class IncrementalScrapePage:
         await SkyvernFrame.evaluate(frame=self.skyvern_frame.get_frame(), expression=js_script)
 
     async def stop_listen_dom_increment(self) -> None:
+        # check if the DOM has navigated away or refreshed
+        js_script = "() => window.globalObserverForDOMIncrement === undefined"
+        if await SkyvernFrame.evaluate(frame=self.skyvern_frame.get_frame(), expression=js_script):
+            return
         js_script = "() => stopGlobalIncrementalObserver()"
         await SkyvernFrame.evaluate(frame=self.skyvern_frame.get_frame(), expression=js_script)
 

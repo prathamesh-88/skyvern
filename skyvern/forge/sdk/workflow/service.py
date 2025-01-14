@@ -1,6 +1,5 @@
 import asyncio
 import json
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -19,7 +18,7 @@ from skyvern.exceptions import (
 from skyvern.forge import app
 from skyvern.forge.sdk.artifact.models import ArtifactType
 from skyvern.forge.sdk.core import skyvern_context
-from skyvern.forge.sdk.core.security import generate_skyvern_signature
+from skyvern.forge.sdk.core.security import generate_skyvern_webhook_headers
 from skyvern.forge.sdk.core.skyvern_context import SkyvernContext
 from skyvern.forge.sdk.db.enums import TaskType
 from skyvern.forge.sdk.models import Step, StepStatus
@@ -189,9 +188,16 @@ class WorkflowService:
         workflow_run_id: str,
         api_key: str,
         organization: Organization,
+        browser_session_id: str | None = None,
     ) -> WorkflowRun:
         """Execute a workflow."""
         organization_id = organization.organization_id
+        LOG.info(
+            "Executing workflow",
+            workflow_run_id=workflow_run_id,
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+        )
         workflow_run = await self.get_workflow_run(workflow_run_id=workflow_run_id, organization_id=organization_id)
         workflow = await self.get_workflow(workflow_id=workflow_run.workflow_id, organization_id=organization_id)
 
@@ -236,6 +242,8 @@ class WorkflowService:
                         workflow_run=workflow_run,
                         api_key=api_key,
                         need_call_webhook=True,
+                        close_browser_on_completion=browser_session_id is None,
+                        browser_session_id=browser_session_id,
                     )
                     return workflow_run
                 parameters = block.get_all_parameters(workflow_run_id)
@@ -253,6 +261,7 @@ class WorkflowService:
                 block_result = await block.execute_safe(
                     workflow_run_id=workflow_run_id,
                     organization_id=organization_id,
+                    browser_session_id=browser_session_id,
                 )
                 if block_result.status == BlockStatus.canceled:
                     LOG.info(
@@ -271,6 +280,8 @@ class WorkflowService:
                         workflow_run=workflow_run,
                         api_key=api_key,
                         need_call_webhook=False,
+                        close_browser_on_completion=browser_session_id is None,
+                        browser_session_id=browser_session_id,
                     )
                     return workflow_run
                 elif block_result.status == BlockStatus.failed:
@@ -292,6 +303,8 @@ class WorkflowService:
                             workflow=workflow,
                             workflow_run=workflow_run,
                             api_key=api_key,
+                            close_browser_on_completion=browser_session_id is None,
+                            browser_session_id=browser_session_id,
                         )
                         return workflow_run
 
@@ -326,6 +339,8 @@ class WorkflowService:
                             workflow=workflow,
                             workflow_run=workflow_run,
                             api_key=api_key,
+                            close_browser_on_completion=browser_session_id is None,
+                            browser_session_id=browser_session_id,
                         )
                         return workflow_run
 
@@ -349,7 +364,7 @@ class WorkflowService:
                     block_label=block.label,
                 )
 
-                exception_message = "unexpected exception"
+                exception_message = f"Unexpected error: {str(e)}"
                 if isinstance(e, SkyvernException):
                     exception_message = f"unexpected SkyvernException({e.__class__.__name__}): {str(e)}"
 
@@ -357,7 +372,13 @@ class WorkflowService:
                 await self.mark_workflow_run_as_failed(
                     workflow_run_id=workflow_run.workflow_run_id, failure_reason=failure_reason
                 )
-                await self.clean_up_workflow(workflow=workflow, workflow_run=workflow_run, api_key=api_key)
+                await self.clean_up_workflow(
+                    workflow=workflow,
+                    workflow_run=workflow_run,
+                    api_key=api_key,
+                    browser_session_id=browser_session_id,
+                    close_browser_on_completion=browser_session_id is None,
+                )
                 return workflow_run
 
         refreshed_workflow_run = await app.DATABASE.get_workflow_run(
@@ -376,7 +397,13 @@ class WorkflowService:
                 workflow_run_id=workflow_run.workflow_run_id,
                 workflow_run_status=refreshed_workflow_run.status if refreshed_workflow_run else None,
             )
-        await self.clean_up_workflow(workflow=workflow, workflow_run=workflow_run, api_key=api_key)
+        await self.clean_up_workflow(
+            workflow=workflow,
+            workflow_run=workflow_run,
+            api_key=api_key,
+            browser_session_id=browser_session_id,
+            close_browser_on_completion=browser_session_id is None,
+        )
         return workflow_run
 
     async def create_workflow(
@@ -865,6 +892,7 @@ class WorkflowService:
         api_key: str | None = None,
         close_browser_on_completion: bool = True,
         need_call_webhook: bool = True,
+        browser_session_id: str | None = None,
     ) -> None:
         analytics.capture("skyvern-oss-agent-workflow-status", {"status": workflow_run.status})
         tasks = await self.get_tasks_by_workflow_run_id(workflow_run.workflow_run_id)
@@ -873,6 +901,8 @@ class WorkflowService:
             workflow_run.workflow_run_id,
             all_workflow_task_ids,
             close_browser_on_completion,
+            browser_session_id,
+            organization_id=workflow_run.organization_id,
         )
         if browser_state:
             await self.persist_video_data(browser_state, workflow, workflow_run)
@@ -943,17 +973,11 @@ class WorkflowService:
             return
 
         # send webhook to the webhook callback url
-        timestamp = str(int(datetime.utcnow().timestamp()))
         payload = workflow_run_status_response.model_dump_json()
-        signature = generate_skyvern_signature(
+        headers = generate_skyvern_webhook_headers(
             payload=payload,
             api_key=api_key,
         )
-        headers = {
-            "x-skyvern-timestamp": timestamp,
-            "x-skyvern-signature": signature,
-            "Content-Type": "application/json",
-        }
         LOG.info(
             "Sending webhook run status to webhook callback url",
             workflow_id=workflow_id,
@@ -1194,10 +1218,6 @@ class WorkflowService:
                         description=parameter.description,
                     )
                 elif parameter.parameter_type == ParameterType.BITWARDEN_CREDIT_CARD_DATA:
-                    if not organization.bw_organization_id and not organization.bw_collection_ids:
-                        raise InvalidWorkflowDefinition(
-                            message="To use credit card data parameters, please contact us at support@skyvern.com"
-                        )
                     parameters[parameter.key] = await self.create_bitwarden_credit_card_data_parameter(
                         workflow_id=workflow.workflow_id,
                         bitwarden_client_id_aws_secret_key=parameter.bitwarden_client_id_aws_secret_key,
