@@ -17,7 +17,7 @@ module.exports = {
             repo: "git@github.com:prathamesh-88/skyvern.git",
             path: "/home/app/skyvern",
             ssh_options: ["ForwardAgent=yes"],
-            "post-deploy": "cd /home/app/skyvern/current && cp ~/.private/.env_skyvern ~/skyvern/current/.env && pm2 reload ecosystem.config.js",
+            "post-deploy": "cd /home/app/skyvern/current && cp ~/.private/.env.skyvern ~/skyvern/current/.env && pm2 reload ecosystem.config.js",
             "post-setup": "python3 -m pip install --user pipx && python3 -m pipx ensurepath && python3 -m pipx install --python python3 poetry==1.7.1"
         }
     }
