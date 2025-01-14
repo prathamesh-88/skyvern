@@ -267,6 +267,8 @@ class SkyvernElement:
         return self.get_selectable() or self.get_tag_name() in SELECTABLE_ELEMENT
 
     async def is_visible(self) -> bool:
+        if not await self.get_locator().count():
+            return False
         skyvern_frame = await SkyvernFrame.create_instance(self.get_frame())
         return await skyvern_frame.get_element_visible(await self.get_element_handler())
 
@@ -326,7 +328,7 @@ class SkyvernElement:
         if not blocking_element_id:
             return None, blocked
 
-        if dom.check_id_in_dom(blocking_element_id):
+        if await dom.check_id_in_dom(blocking_element_id):
             return await dom.get_skyvern_element_by_id(blocking_element_id), blocked
 
         if incremental_page and incremental_page.check_id_in_page(blocking_element_id):
@@ -676,7 +678,7 @@ class DomUtil:
         self.scraped_page = scraped_page
         self.page = page
 
-    def check_id_in_dom(self, element_id: str) -> bool:
+    async def check_id_in_dom(self, element_id: str) -> bool:
         css_selector = self.scraped_page.id_to_css_dict.get(element_id, "")
         if css_selector:
             return True

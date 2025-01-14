@@ -22,6 +22,7 @@ from skyvern.forge.sdk.api.llm.utils import llm_messages_builder, parse_api_resp
 from skyvern.forge.sdk.artifact.models import ArtifactType
 from skyvern.forge.sdk.core import skyvern_context
 from skyvern.forge.sdk.models import Step
+from skyvern.forge.sdk.schemas.ai_suggestions import AISuggestion
 from skyvern.forge.sdk.schemas.observers import ObserverCruise, ObserverThought
 
 LOG = structlog.get_logger()
@@ -63,6 +64,7 @@ class LLMAPIHandlerFactory:
             step: Step | None = None,
             observer_cruise: ObserverCruise | None = None,
             observer_thought: ObserverThought | None = None,
+            ai_suggestion: AISuggestion | None = None,
             screenshots: list[bytes] | None = None,
             parameters: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
@@ -89,6 +91,7 @@ class LLMAPIHandlerFactory:
                     step=step,
                     observer_cruise=observer_cruise,
                     observer_thought=observer_thought,
+                    ai_suggestion=ai_suggestion,
                 )
 
             await app.ARTIFACT_MANAGER.create_llm_artifact(
@@ -113,6 +116,7 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
             try:
                 response = await router.acompletion(model=main_model_group, messages=messages, **parameters)
@@ -140,9 +144,14 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
             if step:
-                llm_cost = litellm.completion_cost(completion_response=response)
+                try:
+                    llm_cost = litellm.completion_cost(completion_response=response)
+                except Exception as e:
+                    LOG.exception("Failed to calculate LLM cost", error=str(e))
+                    llm_cost = 0
                 prompt_tokens = response.get("usage", {}).get("prompt_tokens", 0)
                 completion_tokens = response.get("usage", {}).get("completion_tokens", 0)
                 await app.DATABASE.update_step(
@@ -160,6 +169,7 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
 
             if context and len(context.hashed_href_map) > 0:
@@ -172,6 +182,7 @@ class LLMAPIHandlerFactory:
                     step=step,
                     observer_cruise=observer_cruise,
                     observer_thought=observer_thought,
+                    ai_suggestion=ai_suggestion,
                 )
 
             return parsed_response
@@ -192,6 +203,7 @@ class LLMAPIHandlerFactory:
             step: Step | None = None,
             observer_cruise: ObserverCruise | None = None,
             observer_thought: ObserverThought | None = None,
+            ai_suggestion: AISuggestion | None = None,
             screenshots: list[bytes] | None = None,
             parameters: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
@@ -211,6 +223,7 @@ class LLMAPIHandlerFactory:
                     step=step,
                     observer_cruise=observer_cruise,
                     observer_thought=observer_thought,
+                    ai_suggestion=ai_suggestion,
                 )
 
             await app.ARTIFACT_MANAGER.create_llm_artifact(
@@ -220,6 +233,7 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
 
             if not llm_config.supports_vision:
@@ -239,6 +253,7 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
             t_llm_request = time.perf_counter()
             try:
@@ -274,10 +289,15 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
 
             if step:
-                llm_cost = litellm.completion_cost(completion_response=response)
+                try:
+                    llm_cost = litellm.completion_cost(completion_response=response)
+                except Exception as e:
+                    LOG.exception("Failed to calculate LLM cost", error=str(e))
+                    llm_cost = 0
                 prompt_tokens = response.get("usage", {}).get("prompt_tokens", 0)
                 completion_tokens = response.get("usage", {}).get("completion_tokens", 0)
                 await app.DATABASE.update_step(
@@ -295,6 +315,7 @@ class LLMAPIHandlerFactory:
                 step=step,
                 observer_cruise=observer_cruise,
                 observer_thought=observer_thought,
+                ai_suggestion=ai_suggestion,
             )
 
             if context and len(context.hashed_href_map) > 0:
@@ -307,6 +328,7 @@ class LLMAPIHandlerFactory:
                     step=step,
                     observer_cruise=observer_cruise,
                     observer_thought=observer_thought,
+                    ai_suggestion=ai_suggestion,
                 )
 
             return parsed_response

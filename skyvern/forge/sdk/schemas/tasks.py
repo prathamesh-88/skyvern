@@ -24,6 +24,7 @@ class ProxyLocation(StrEnum):
     RESIDENTIAL_GB = "RESIDENTIAL_GB"
     RESIDENTIAL_IN = "RESIDENTIAL_IN"
     RESIDENTIAL_JP = "RESIDENTIAL_JP"
+    RESIDENTIAL_FR = "RESIDENTIAL_FR"
     NONE = "NONE"
 
 
@@ -63,6 +64,9 @@ def get_tzinfo_from_proxy(proxy_location: ProxyLocation) -> ZoneInfo | None:
 
     if proxy_location == ProxyLocation.RESIDENTIAL_JP:
         return ZoneInfo("Asia/Kolkata")
+
+    if proxy_location == ProxyLocation.RESIDENTIAL_FR:
+        return ZoneInfo("Europe/Paris")
 
     return None
 
@@ -151,6 +155,7 @@ class TaskRequest(TaskBase):
         examples=["https://my-webhook.com"],
     )
     totp_verification_url: str | None = None
+    browser_session_id: str | None = None
 
     @field_validator("url", "webhook_callback_url", "totp_verification_url")
     @classmethod

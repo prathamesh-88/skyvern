@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
 
 from skyvern.exceptions import UrlGenerationFailure
@@ -18,7 +17,6 @@ from skyvern.forge.sdk.schemas.observers import (
     ObserverCruise,
     ObserverCruiseStatus,
     ObserverMetadata,
-    ObserverThought,
     ObserverThoughtScenario,
     ObserverThoughtType,
 )
@@ -56,29 +54,26 @@ DEFAULT_WORKFLOW_TITLE = "New Workflow"
 RANDOM_STRING_POOL = string.ascii_letters + string.digits
 DEFAULT_MAX_ITERATIONS = 10
 
-DATA_EXTRACTION_SCHEMA_FOR_LOOP = {
-    "type": "object",
-    "properties": {
-        "loop_values": {
-            "type": "array",
-            "description": 'User will later iterate through this array of values to achieve their "big goal" in the web. In each iteration, the user will try to take the same actions in the web but with a different value of its own. If the value is a url link, make sure it is a full url with http/https protocol, domain and path if any, based on the current url. For examples: \n1. When the goal is "Open up to 10 links from an ecomm search result page, and extract information like the price of each product.", user will iterate through an array of product links or URLs. In each iteration, the user will go to the linked page and extrat price information of the product. As a result, the array consists of 10 product urls scraped from the search result page.\n2. When the goal is "download 10 documents found on a page", user will iterate through an array of document names. In each iteration, the user will use a different value variant to start from the same page (the existing page) and take actions based on the variant. As a result, the array consists of up to 10 document names scraped from the page that the user wants to download.',
-            "items": {"type": "string", "description": "The relevant value"},
-        },
-        "is_loop_value_link": {
-            "type": "boolean",
-            "description": "true if the loop_values is an array of urls to be visited for each task. false if the loop_values is an array of non-link values to be used in each task (for each task they start from the same page / link).",
-        },
-    },
-}
-
 MINI_GOAL_TEMPLATE = """Achieve the following mini goal and once it's achieved, complete: {mini_goal}
 
 This mini goal is part of the big goal the user wants to achieve and use the big goal as context to achieve the mini goal: {main_goal}"""
 
 
-class LoopExtractionOutput(BaseModel):
-    loop_values: list[str]
-    is_loop_value_link: bool
+def _generate_data_extraction_schema_for_loop(loop_values_key: str) -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            loop_values_key: {
+                "type": "array",
+                "description": 'User will later iterate through this array of values to achieve their "big goal" in the web. In each iteration, the user will try to take the same actions in the web but with a different value of its own. If the value is a url link, make sure it is a full url with http/https protocol, domain and path if any, based on the current url. For examples: \n1. When the goal is "Open up to 10 links from an ecomm search result page, and extract information like the price of each product.", user will iterate through an array of product links or URLs. In each iteration, the user will go to the linked page and extrat price information of the product. As a result, the array consists of 10 product urls scraped from the search result page.\n2. When the goal is "download 10 documents found on a page", user will iterate through an array of document names. In each iteration, the user will use a different value variant to start from the same page (the existing page) and take actions based on the variant. As a result, the array consists of up to 10 document names scraped from the page that the user wants to download.',
+                "items": {"type": "string", "description": "The relevant value"},
+            },
+            "is_loop_value_link": {
+                "type": "boolean",
+                "description": "true if the loop_values is an array of urls to be visited for each task. false if the loop_values is an array of non-link values to be used in each task (for each task they start from the same page / link).",
+            },
+        },
+    }
 
 
 async def initialize_observer_cruise(
@@ -177,6 +172,7 @@ async def run_observer_cruise(
     observer_cruise_id: str,
     request_id: str | None = None,
     max_iterations_override: str | int | None = None,
+    browser_session_id: str | None = None,
 ) -> None:
     organization_id = organization.organization_id
     try:
@@ -201,6 +197,7 @@ async def run_observer_cruise(
             observer_cruise=observer_cruise,
             request_id=request_id,
             max_iterations_override=max_iterations_override,
+            browser_session_id=browser_session_id,
         )
     except OperationalError:
         LOG.error("Database error when running observer cruise", exc_info=True)
@@ -211,19 +208,24 @@ async def run_observer_cruise(
             organization_id=organization_id,
         )
         return
-    except Exception:
+    except Exception as e:
         LOG.error("Failed to run observer cruise", exc_info=True)
+        failure_reason = f"Failed to run observer cruise: {str(e)}"
         await mark_observer_cruise_as_failed(
             observer_cruise_id,
             workflow_run_id=observer_cruise.workflow_run_id,
-            # TODO: add better failure reason
-            failure_reason="Failed to run observer cruise",
+            failure_reason=failure_reason,
             organization_id=organization_id,
         )
         return
     finally:
         if workflow and workflow_run:
-            await app.WORKFLOW_SERVICE.clean_up_workflow(workflow=workflow, workflow_run=workflow_run)
+            await app.WORKFLOW_SERVICE.clean_up_workflow(
+                workflow=workflow,
+                workflow_run=workflow_run,
+                browser_session_id=browser_session_id,
+                close_browser_on_completion=browser_session_id is None,
+            )
         else:
             LOG.warning("Workflow or workflow run not found")
 
@@ -235,6 +237,7 @@ async def run_observer_cruise_helper(
     observer_cruise: ObserverCruise,
     request_id: str | None = None,
     max_iterations_override: str | int | None = None,
+    browser_session_id: str | None = None,
 ) -> tuple[Workflow, WorkflowRun] | tuple[None, None]:
     organization_id = organization.organization_id
     observer_cruise_id = observer_cruise.observer_cruise_id
@@ -318,18 +321,23 @@ async def run_observer_cruise_helper(
     max_iterations = int_max_iterations_override or DEFAULT_MAX_ITERATIONS
     for i in range(max_iterations):
         LOG.info(f"Observer iteration i={i}", workflow_run_id=workflow_run_id, url=url)
-        browser_state = await app.BROWSER_MANAGER.get_or_create_for_workflow_run(
-            workflow_run=workflow_run,
-            url=url,
-        )
-        scraped_page = await scrape_website(
-            browser_state,
-            url,
-            app.AGENT_FUNCTION.cleanup_element_tree_factory(),
-            scrape_exclude=app.scrape_exclude,
-        )
-        element_tree_in_prompt: str = scraped_page.build_element_tree(ElementTreeFormat.HTML)
-        page = await browser_state.get_working_page()
+        try:
+            browser_state = await app.BROWSER_MANAGER.get_or_create_for_workflow_run(
+                workflow_run=workflow_run,
+                url=url,
+                browser_session_id=browser_session_id,
+            )
+            scraped_page = await scrape_website(
+                browser_state,
+                url,
+                app.AGENT_FUNCTION.cleanup_element_tree_factory(),
+                scrape_exclude=app.scrape_exclude,
+            )
+            element_tree_in_prompt: str = scraped_page.build_element_tree(ElementTreeFormat.HTML)
+            page = await browser_state.get_working_page()
+        except Exception:
+            LOG.exception("Failed to get browser state or scrape website in observer iteration", iteration=i, url=url)
+            continue
         current_url = str(
             await SkyvernFrame.evaluate(frame=page, expression="() => document.location.href") if page else url
         )
@@ -386,7 +394,12 @@ async def run_observer_cruise_helper(
                 iteration=i,
                 workflow_run_id=workflow_run_id,
             )
-            await app.WORKFLOW_SERVICE.mark_workflow_run_as_completed(workflow_run_id=workflow_run_id)
+            await _summarize_observer_cruise(
+                observer_cruise=observer_cruise,
+                task_history=task_history,
+                context=context,
+                screenshots=scraped_page.screenshots,
+            )
             break
 
         # parse observer repsonse and run the next task
@@ -438,7 +451,7 @@ async def run_observer_cruise_helper(
                 task_history_record = {
                     "type": task_type,
                     "task": plan,
-                    "loop_over_values": extraction_obj.loop_values,
+                    "loop_over_values": extraction_obj.get("loop_values"),
                     "task_inside_the_loop": inner_task,
                 }
             except Exception:
@@ -457,6 +470,9 @@ async def run_observer_cruise_helper(
 
         # generate the extraction task
         block_result = await block.execute_safe(workflow_run_id=workflow_run_id, organization_id=organization_id)
+        task_history_record["status"] = str(block_result.status)
+        if block_result.failure_reason:
+            task_history_record["reason"] = block_result.failure_reason
 
         extracted_data = _get_extracted_data_from_block_result(
             block_result,
@@ -491,7 +507,13 @@ async def run_observer_cruise_helper(
         LOG.info("Workflow created", workflow_id=workflow.workflow_id)
 
         # execute the extraction task
-        workflow_run = await handle_block_result(block, block_result, workflow, workflow_run)
+        workflow_run = await handle_block_result(
+            block,
+            block_result,
+            workflow,
+            workflow_run,
+            browser_session_id=browser_session_id,
+        )
         if workflow_run.status != WorkflowRunStatus.running:
             LOG.info(
                 "Workflow run is not running anymore, stopping the observer",
@@ -500,7 +522,19 @@ async def run_observer_cruise_helper(
             )
             break
         if block_result.success is True:
-            # validate completion
+            completion_screenshots = []
+            try:
+                scraped_page = await scrape_website(
+                    browser_state,
+                    url,
+                    app.AGENT_FUNCTION.cleanup_element_tree_factory(),
+                    scrape_exclude=app.scrape_exclude,
+                )
+                completion_screenshots = scraped_page.screenshots
+            except Exception:
+                LOG.warning("Failed to scrape the website for observer completion check")
+
+            # validate completion only happens at the last iteration
             observer_completion_prompt = prompt_engine.load_prompt(
                 "observer_check_completion",
                 user_goal=user_prompt,
@@ -518,9 +552,9 @@ async def run_observer_cruise_helper(
             )
             completion_resp = await app.LLM_API_HANDLER(
                 prompt=observer_completion_prompt,
-                observer_cruise=observer_thought,
+                screenshots=completion_screenshots,
+                observer_thought=observer_thought,
             )
-            await _record_thought_screenshot(observer_thought=observer_thought, workflow_run_id=workflow_run_id)
             LOG.info(
                 "Observer completion check response",
                 completion_resp=completion_resp,
@@ -543,10 +577,11 @@ async def run_observer_cruise_helper(
                     workflow_run_id=workflow_run_id,
                     completion_resp=completion_resp,
                 )
-                await mark_observer_cruise_as_completed(
-                    observer_cruise_id=observer_cruise_id,
-                    workflow_run_id=workflow_run_id,
-                    organization_id=organization_id,
+                await _summarize_observer_cruise(
+                    observer_cruise=observer_cruise,
+                    task_history=task_history,
+                    context=context,
+                    screenshots=completion_screenshots,
                 )
                 break
     else:
@@ -572,6 +607,7 @@ async def handle_block_result(
     workflow: Workflow,
     workflow_run: WorkflowRun,
     is_last_block: bool = True,
+    browser_session_id: str | None = None,
 ) -> WorkflowRun:
     workflow_run_id = workflow_run.workflow_run_id
     if block_result.status == BlockStatus.canceled:
@@ -590,6 +626,8 @@ async def handle_block_result(
             workflow=workflow,
             workflow_run=workflow_run,
             need_call_webhook=False,
+            close_browser_on_completion=browser_session_id is None,
+            browser_session_id=browser_session_id,
         )
     elif block_result.status == BlockStatus.failed:
         LOG.error(
@@ -610,20 +648,10 @@ async def handle_block_result(
                 block_type_var=block.block_type,
                 block_label=block.label,
             )
-        else:
-            failure_reason = f"Block with type {block.block_type} failed. failure reason: {block_result.failure_reason}"
-            await app.WORKFLOW_SERVICE.mark_workflow_run_as_failed(
-                workflow_run_id=workflow_run.workflow_run_id, failure_reason=failure_reason
-            )
-
-            # TODO: add api_key
-            await app.WORKFLOW_SERVICE.clean_up_workflow(
-                workflow=workflow,
-                workflow_run=workflow_run,
-            )
+        # observer will continue running the workflow
     elif block_result.status == BlockStatus.terminated:
         LOG.info(
-            f"Block with type {block.block_type} was terminated for workflow run {workflow_run_id}, marking workflow run as terminated",
+            f"Block with type {block.block_type} was terminated for workflow run {workflow_run_id}",
             block_type=block.block_type,
             workflow_run_id=workflow_run.workflow_run_id,
             block_result=block_result,
@@ -639,15 +667,6 @@ async def handle_block_result(
                 continue_on_failure=block.continue_on_failure,
                 block_type_var=block.block_type,
                 block_label=block.label,
-            )
-        else:
-            failure_reason = f"Block with type {block.block_type} terminated. Reason: {block_result.failure_reason}"
-            await app.WORKFLOW_SERVICE.mark_workflow_run_as_terminated(
-                workflow_run_id=workflow_run.workflow_run_id, failure_reason=failure_reason
-            )
-            await app.WORKFLOW_SERVICE.clean_up_workflow(
-                workflow=workflow,
-                workflow_run=workflow_run,
             )
     # refresh workflow run model
     return await app.WORKFLOW_SERVICE.get_workflow_run(
@@ -680,7 +699,7 @@ async def _generate_loop_task(
     browser_state: BrowserState,
     original_url: str,
     scraped_page: ScrapedPage,
-) -> tuple[ForLoopBlock, list[BLOCK_YAML_TYPES], list[PARAMETER_YAML_TYPES], LoopExtractionOutput, dict[str, Any]]:
+) -> tuple[ForLoopBlock, list[BLOCK_YAML_TYPES], list[PARAMETER_YAML_TYPES], dict[str, Any], dict[str, Any]]:
     for_loop_parameter_yaml_list: list[PARAMETER_YAML_TYPES] = []
     loop_value_extraction_goal = prompt_engine.load_prompt(
         "observer_loop_task_extraction_goal",
@@ -705,11 +724,13 @@ async def _generate_loop_task(
                 artifact_type=ArtifactType.SCREENSHOT_LLM,
                 data=screenshot,
             )
-    label = f"extraction_task_for_loop_{_generate_random_string()}"
+    loop_random_string = _generate_random_string()
+    label = f"extraction_task_for_loop_{loop_random_string}"
+    loop_values_key = f"loop_values_{loop_random_string}"
     extraction_block_yaml = ExtractionBlockYAML(
         label=label,
         data_extraction_goal=loop_value_extraction_goal,
-        data_schema=DATA_EXTRACTION_SCHEMA_FOR_LOOP,
+        data_schema=_generate_data_extraction_schema_for_loop(loop_values_key),
     )
     loop_value_extraction_output_parameter = await app.WORKFLOW_SERVICE.create_output_parameter_for_block(
         workflow_id=workflow_id,
@@ -718,7 +739,7 @@ async def _generate_loop_task(
     extraction_block_for_loop = ExtractionBlock(
         label=label,
         data_extraction_goal=loop_value_extraction_goal,
-        data_schema=DATA_EXTRACTION_SCHEMA_FOR_LOOP,
+        data_schema=_generate_data_extraction_schema_for_loop(loop_values_key),
         output_parameter=loop_value_extraction_output_parameter,
     )
 
@@ -741,9 +762,15 @@ async def _generate_loop_task(
         raise Exception("extraction_block failed")
     # validate output parameter
     try:
-        output_value_obj = LoopExtractionOutput.model_validate(
-            extraction_block_result.output_parameter_value.get("extracted_information")  # type: ignore
-        )
+        output_value_obj: dict[str, Any] = extraction_block_result.output_parameter_value.get("extracted_information")  # type: ignore
+        if not output_value_obj or not isinstance(output_value_obj, dict):
+            raise Exception("Invalid output parameter of the extraction block for the loop task")
+        if loop_values_key not in output_value_obj:
+            raise Exception("loop_values_key not found in the output parameter of the extraction block")
+        if "is_loop_value_link" not in output_value_obj:
+            raise Exception("is_loop_value_link not found in the output parameter of the extraction block")
+        loop_values = output_value_obj.get(loop_values_key, [])
+        is_loop_value_link = output_value_obj.get("is_loop_value_link")
     except Exception:
         LOG.error(
             "Failed to validate the output parameter of the extraction block for the loop task",
@@ -759,12 +786,12 @@ async def _generate_loop_task(
     await app.DATABASE.update_observer_thought(
         observer_thought_id=observer_thought.observer_thought_id,
         organization_id=observer_cruise.organization_id,
-        output=output_value_obj.model_dump(),
+        output=output_value_obj,
     )
 
     # create ContextParameter for the loop over pointer that ForLoopBlock needs.
     loop_for_context_parameter = ContextParameter(
-        key="loop_values",
+        key=loop_values_key,
         source=loop_value_extraction_output_parameter,
     )
     for_loop_parameter_yaml_list.append(
@@ -781,12 +808,11 @@ async def _generate_loop_task(
         value=extraction_block_result.output_parameter_value,
     )
     task_parameters: list[PARAMETER_TYPE] = []
-    if output_value_obj.is_loop_value_link:
-        LOG.info("Loop values are links", loop_values=output_value_obj.loop_values)
-        url = "task_in_loop_url"
-        context_parameter_key = "task_in_loop_url"
+    if is_loop_value_link is True:
+        LOG.info("Loop values are links", loop_values=loop_values)
+        context_parameter_key = url = f"task_in_loop_url_{loop_random_string}"
     else:
-        LOG.info("Loop values are not links", loop_values=output_value_obj.loop_values)
+        LOG.info("Loop values are not links", loop_values=loop_values)
         page = await browser_state.get_working_page()
         url = str(
             await SkyvernFrame.evaluate(frame=page, expression="() => document.location.href") if page else original_url
@@ -814,8 +840,8 @@ async def _generate_loop_task(
         "observer_generate_task_block",
         plan=plan,
         local_datetime=datetime.now(context.tz_info).isoformat(),
-        is_link=output_value_obj.is_loop_value_link,
-        loop_values=output_value_obj.loop_values,
+        is_link=is_loop_value_link,
+        loop_values=loop_values,
     )
     observer_thought_task_in_loop = await app.DATABASE.create_observer_thought(
         observer_cruise_id=observer_cruise.observer_cruise_id,
@@ -1018,21 +1044,6 @@ async def get_observer_thought_timelines(
     ]
 
 
-async def _record_thought_screenshot(observer_thought: ObserverThought, workflow_run_id: str) -> None:
-    # get the browser state for the workflow run
-    browser_state = app.BROWSER_MANAGER.get_for_workflow_run(workflow_run_id=workflow_run_id)
-    if not browser_state:
-        LOG.warning("No browser state found for the workflow run", workflow_run_id=workflow_run_id)
-        return
-    # get the screenshot for the workflow run
-    screenshot = await browser_state.take_screenshot(full_page=True)
-    await app.ARTIFACT_MANAGER.create_observer_thought_artifact(
-        observer_thought=observer_thought,
-        artifact_type=ArtifactType.SCREENSHOT_LLM,
-        data=screenshot,
-    )
-
-
 async def get_observer_cruise(observer_cruise_id: str, organization_id: str | None = None) -> ObserverCruise | None:
     return await app.DATABASE.get_observer_cruise(observer_cruise_id, organization_id=organization_id)
 
@@ -1056,11 +1067,15 @@ async def mark_observer_cruise_as_completed(
     observer_cruise_id: str,
     workflow_run_id: str | None = None,
     organization_id: str | None = None,
+    summary: str | None = None,
+    output: dict[str, Any] | None = None,
 ) -> None:
     await app.DATABASE.update_observer_cruise(
         observer_cruise_id,
         organization_id=organization_id,
         status=ObserverCruiseStatus.completed,
+        summary=summary,
+        output=output,
     )
     if workflow_run_id:
         await app.WORKFLOW_SERVICE.mark_workflow_run_as_completed(workflow_run_id)
@@ -1118,8 +1133,65 @@ def _get_extracted_data_from_block_result(
                         )
                         continue
                     output_value = inner_output.get("output_value", {})
-                    if "extracted_information" in output_value and output_value["extracted_information"]:
-                        inner_loop_output_overall.append(output_value["extracted_information"])
+                    if not isinstance(output_value, dict):
+                        LOG.warning(
+                            "output_value is not a dict",
+                            output_value=output_value,
+                            observer_cruise_id=observer_cruise_id,
+                            workflow_run_id=workflow_run_id,
+                            workflow_run_block_id=block_result.workflow_run_block_id,
+                        )
+                        continue
+                    else:
+                        if "extracted_information" in output_value and output_value["extracted_information"]:
+                            inner_loop_output_overall.append(output_value["extracted_information"])
                 loop_output_overall.append(inner_loop_output_overall)
             return loop_output_overall if loop_output_overall else None
     return None
+
+
+async def _summarize_observer_cruise(
+    observer_cruise: ObserverCruise,
+    task_history: list[dict],
+    context: SkyvernContext,
+    screenshots: list[bytes] | None = None,
+) -> None:
+    observer_thought = await app.DATABASE.create_observer_thought(
+        observer_cruise_id=observer_cruise.observer_cruise_id,
+        organization_id=observer_cruise.organization_id,
+        workflow_run_id=observer_cruise.workflow_run_id,
+        workflow_id=observer_cruise.workflow_id,
+        workflow_permanent_id=observer_cruise.workflow_permanent_id,
+        observer_thought_type=ObserverThoughtType.user_goal_check,
+        observer_thought_scenario=ObserverThoughtScenario.summarization,
+    )
+    # summarize the observer cruise and format the output
+    observer_summary_prompt = prompt_engine.load_prompt(
+        "observer_summary",
+        user_goal=observer_cruise.prompt,
+        task_history=task_history,
+        local_datetime=datetime.now(context.tz_info).isoformat(),
+    )
+    observer_summary_resp = await app.LLM_API_HANDLER(
+        prompt=observer_summary_prompt,
+        screenshots=screenshots,
+        observer_thought=observer_thought,
+    )
+    LOG.info("Observer summary response", observer_summary_resp=observer_summary_resp)
+
+    thought = observer_summary_resp.get("description")
+    summarized_output = observer_summary_resp.get("output")
+    await app.DATABASE.update_observer_thought(
+        observer_thought_id=observer_thought.observer_thought_id,
+        organization_id=observer_cruise.organization_id,
+        thought=thought,
+        output=observer_summary_resp,
+    )
+
+    await mark_observer_cruise_as_completed(
+        observer_cruise_id=observer_cruise.observer_cruise_id,
+        workflow_run_id=observer_cruise.workflow_run_id,
+        organization_id=observer_cruise.organization_id,
+        summary=thought,
+        output=summarized_output,
+    )
