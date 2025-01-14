@@ -351,7 +351,7 @@ class WorkflowService:
 
                 exception_message = "unexpected exception"
                 if isinstance(e, SkyvernException):
-                    exception_message = f"unexpected SkyvernException({e.__class__.__name__})"
+                    exception_message = f"unexpected SkyvernException({e.__class__.__name__}): {str(e)}"
 
                 failure_reason = f"Block with type {block.block_type} at index {block_idx}/{blocks_cnt -1} failed. failure reason: {exception_message}"
                 await self.mark_workflow_run_as_failed(
@@ -726,8 +726,8 @@ class WorkflowService:
 
         return [
             (output_parameter, workflow_run_output_parameter)
-            for output_parameter in output_parameters
             for workflow_run_output_parameter in workflow_run_output_parameters
+            for output_parameter in output_parameters
             if output_parameter.output_parameter_id == workflow_run_output_parameter.output_parameter_id
         ]
 
@@ -1371,7 +1371,7 @@ class WorkflowService:
                     loop_over_parameter = parameters[trimmed_key]
 
             if loop_over_parameter is None and not block_yaml.loop_variable_reference:
-                raise Exception("empty loop value parameter")
+                raise Exception("Loop value parameter is required for for loop block")
 
             return ForLoopBlock(
                 label=block_yaml.label,

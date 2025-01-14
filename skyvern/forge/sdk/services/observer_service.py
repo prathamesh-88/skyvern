@@ -71,6 +71,10 @@ DATA_EXTRACTION_SCHEMA_FOR_LOOP = {
     },
 }
 
+MINI_GOAL_TEMPLATE = """Achieve the following mini goal and once it's achieved, complete: {mini_goal}
+
+This mini goal is part of the big goal the user wants to achieve and use the big goal as context to achieve the mini goal: {main_goal}"""
+
 
 class LoopExtractionOutput(BaseModel):
     loop_values: list[str]
@@ -84,6 +88,10 @@ async def initialize_observer_cruise(
         prompt=user_prompt,
         organization_id=organization.organization_id,
     )
+    # set observer cruise id in context
+    context = skyvern_context.current()
+    if context:
+        context.observer_cruise_id = observer_cruise.observer_cruise_id
 
     observer_thought = await app.DATABASE.create_observer_thought(
         observer_cruise_id=observer_cruise.observer_cruise_id,
@@ -186,6 +194,7 @@ async def run_observer_cruise(
         LOG.error("Observer cruise not found", observer_cruise_id=observer_cruise_id, organization_id=organization_id)
         return None
 
+    workflow, workflow_run = None, None
     try:
         workflow, workflow_run = await run_observer_cruise_helper(
             organization=organization,
@@ -212,14 +221,13 @@ async def run_observer_cruise(
             organization_id=organization_id,
         )
         return
+    finally:
+        if workflow and workflow_run:
+            await app.WORKFLOW_SERVICE.clean_up_workflow(workflow=workflow, workflow_run=workflow_run)
+        else:
+            LOG.warning("Workflow or workflow run not found")
 
-    await app.DATABASE.update_observer_cruise(
-        observer_cruise_id=observer_cruise_id,
-        organization_id=organization_id,
-        status=ObserverCruiseStatus.completed,
-    )
-    if workflow and workflow_run:
-        await app.WORKFLOW_SERVICE.clean_up_workflow(workflow=workflow, workflow_run=workflow_run)
+        skyvern_context.reset()
 
 
 async def run_observer_cruise_helper(
@@ -291,6 +299,7 @@ async def run_observer_cruise_helper(
             workflow_id=workflow_id,
             workflow_run_id=workflow_run_id,
             request_id=request_id,
+            observer_cruise_id=observer_cruise_id,
         )
     )
 
@@ -306,7 +315,8 @@ async def run_observer_cruise_helper(
     yaml_blocks: list[BLOCK_YAML_TYPES] = []
     yaml_parameters: list[PARAMETER_YAML_TYPES] = []
 
-    for i in range(int_max_iterations_override or DEFAULT_MAX_ITERATIONS):
+    max_iterations = int_max_iterations_override or DEFAULT_MAX_ITERATIONS
+    for i in range(max_iterations):
         LOG.info(f"Observer iteration i={i}", workflow_run_id=workflow_run_id, url=url)
         browser_state = await app.BROWSER_MANAGER.get_or_create_for_workflow_run(
             workflow_run=workflow_run,
@@ -389,6 +399,7 @@ async def run_observer_cruise_helper(
             break
 
         block: BlockTypeVar | None = None
+        task_history_record: dict[str, Any] = {}
         if task_type == "extract":
             block, block_yaml_list, parameter_yaml_list = await _generate_extraction_task(
                 observer_cruise=observer_cruise,
@@ -400,17 +411,18 @@ async def run_observer_cruise_helper(
                 data_extraction_goal=plan,
                 task_history=task_history,
             )
-            task_history.append({"type": task_type, "task": plan})
+            task_history_record = {"type": task_type, "task": plan}
         elif task_type == "navigate":
             original_url = url if i == 0 else None
+            navigation_goal = MINI_GOAL_TEMPLATE.format(main_goal=user_prompt, mini_goal=plan)
             block, block_yaml_list, parameter_yaml_list = await _generate_navigation_task(
                 workflow_id=workflow_id,
                 workflow_permanent_id=workflow.workflow_permanent_id,
                 workflow_run_id=workflow_run_id,
                 original_url=original_url,
-                navigation_goal=plan,
+                navigation_goal=navigation_goal,
             )
-            task_history.append({"type": task_type, "task": plan})
+            task_history_record = {"type": task_type, "task": plan}
         elif task_type == "loop":
             try:
                 block, block_yaml_list, parameter_yaml_list, extraction_obj, inner_task = await _generate_loop_task(
@@ -423,14 +435,12 @@ async def run_observer_cruise_helper(
                     original_url=url,
                     scraped_page=scraped_page,
                 )
-                task_history.append(
-                    {
-                        "type": task_type,
-                        "task": plan,
-                        "loop_over_values": extraction_obj.loop_values,
-                        "task_inside_the_loop": inner_task,
-                    }
-                )
+                task_history_record = {
+                    "type": task_type,
+                    "task": plan,
+                    "loop_over_values": extraction_obj.loop_values,
+                    "task_inside_the_loop": inner_task,
+                }
             except Exception:
                 LOG.exception("Failed to generate loop task")
                 await app.WORKFLOW_SERVICE.mark_workflow_run_as_failed(
@@ -448,6 +458,15 @@ async def run_observer_cruise_helper(
         # generate the extraction task
         block_result = await block.execute_safe(workflow_run_id=workflow_run_id, organization_id=organization_id)
 
+        extracted_data = _get_extracted_data_from_block_result(
+            block_result,
+            task_type,
+            observer_cruise_id=observer_cruise_id,
+            workflow_run_id=workflow_run_id,
+        )
+        if extracted_data is not None:
+            task_history_record["extracted_data"] = extracted_data
+        task_history.append(task_history_record)
         # refresh workflow
         yaml_blocks.extend(block_yaml_list)
         yaml_parameters.extend(parameter_yaml_list)
@@ -524,8 +543,26 @@ async def run_observer_cruise_helper(
                     workflow_run_id=workflow_run_id,
                     completion_resp=completion_resp,
                 )
-                await app.WORKFLOW_SERVICE.mark_workflow_run_as_completed(workflow_run_id=workflow_run_id)
+                await mark_observer_cruise_as_completed(
+                    observer_cruise_id=observer_cruise_id,
+                    workflow_run_id=workflow_run_id,
+                    organization_id=organization_id,
+                )
                 break
+    else:
+        LOG.info(
+            "Observer cruise failed - run out of iterations",
+            max_iterations=max_iterations,
+            workflow_run_id=workflow_run_id,
+        )
+        await mark_observer_cruise_as_failed(
+            observer_cruise_id=observer_cruise_id,
+            workflow_run_id=workflow_run_id,
+            # TODO: add a better failure reason with LLM
+            failure_reason="Observer max iterations reached",
+            organization_id=organization_id,
+        )
+
     return workflow, workflow_run
 
 
@@ -1013,3 +1050,76 @@ async def mark_observer_cruise_as_failed(
         await app.WORKFLOW_SERVICE.mark_workflow_run_as_failed(
             workflow_run_id, failure_reason=failure_reason or "Observer cruise failed"
         )
+
+
+async def mark_observer_cruise_as_completed(
+    observer_cruise_id: str,
+    workflow_run_id: str | None = None,
+    organization_id: str | None = None,
+) -> None:
+    await app.DATABASE.update_observer_cruise(
+        observer_cruise_id,
+        organization_id=organization_id,
+        status=ObserverCruiseStatus.completed,
+    )
+    if workflow_run_id:
+        await app.WORKFLOW_SERVICE.mark_workflow_run_as_completed(workflow_run_id)
+
+
+def _get_extracted_data_from_block_result(
+    block_result: BlockResult,
+    task_type: str,
+    observer_cruise_id: str | None = None,
+    workflow_run_id: str | None = None,
+) -> Any | None:
+    """Extract data from block result based on task type.
+
+    Args:
+        block_result: The result from block execution
+        task_type: Type of task ("extract" or "loop")
+        observer_cruise_id: Optional ID for logging
+        workflow_run_id: Optional ID for logging
+
+    Returns:
+        Extracted data if available, None otherwise
+    """
+    if task_type == "extract":
+        if (
+            isinstance(block_result.output_parameter_value, dict)
+            and "extracted_information" in block_result.output_parameter_value
+            and block_result.output_parameter_value["extracted_information"]
+        ):
+            return block_result.output_parameter_value["extracted_information"]
+    elif task_type == "loop":
+        # if loop task has data extraction, add it to the task history
+        # WARNING: the assumption here is that the output_paremeter_value is a list of list of dicts
+        #          output_parameter_value data structure is not consistent across all the blocks
+        if block_result.output_parameter_value and isinstance(block_result.output_parameter_value, list):
+            loop_output_overall = []
+            for inner_loop_output in block_result.output_parameter_value:
+                inner_loop_output_overall = []
+                if not isinstance(inner_loop_output, list):
+                    LOG.warning(
+                        "Inner loop output is not a list",
+                        inner_loop_output=inner_loop_output,
+                        observer_cruise_id=observer_cruise_id,
+                        workflow_run_id=workflow_run_id,
+                        workflow_run_block_id=block_result.workflow_run_block_id,
+                    )
+                    continue
+                for inner_output in inner_loop_output:
+                    if not isinstance(inner_output, dict):
+                        LOG.warning(
+                            "inner output is not a dict",
+                            inner_output=inner_output,
+                            observer_cruise_id=observer_cruise_id,
+                            workflow_run_id=workflow_run_id,
+                            workflow_run_block_id=block_result.workflow_run_block_id,
+                        )
+                        continue
+                    output_value = inner_output.get("output_value", {})
+                    if "extracted_information" in output_value and output_value["extracted_information"]:
+                        inner_loop_output_overall.append(output_value["extracted_information"])
+                loop_output_overall.append(inner_loop_output_overall)
+            return loop_output_overall if loop_output_overall else None
+    return None

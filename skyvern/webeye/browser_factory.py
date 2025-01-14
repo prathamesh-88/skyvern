@@ -4,12 +4,14 @@ import asyncio
 import os
 import time
 import uuid
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 import aiofiles
 import structlog
+# from playwright_stealth import stealth_async
 from playwright.async_api import BrowserContext, ConsoleMessage, Download, Error, Page, Playwright
 from pydantic import BaseModel, PrivateAttr
 
@@ -29,6 +31,13 @@ from skyvern.forge.sdk.schemas.tasks import ProxyLocation, get_tzinfo_from_proxy
 from skyvern.webeye.utils.page import SkyvernFrame
 
 LOG = structlog.get_logger()
+
+USER_AGENT_STRINGS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.2227.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.3497.92 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+]
 
 
 BrowserCleanupFunc = Callable[[], None] | None
@@ -162,6 +171,10 @@ class BrowserContextFactory:
 
     @staticmethod
     def build_browser_args(proxy_location: ProxyLocation | None = None) -> dict[str, Any]:
+
+        disable_extensions_except = ",".join(settings.EXTENSIONS_PATH)
+        load_extensions = ",".join(settings.EXTENSIONS_PATH)
+
         video_dir = f"{settings.VIDEO_PATH}/{datetime.utcnow().strftime('%Y-%m-%d')}"
         har_dir = (
             f"{settings.HAR_PATH}/{datetime.utcnow().strftime('%Y-%m-%d')}/{BrowserContextFactory.get_subdir()}.har"
@@ -174,6 +187,8 @@ class BrowserContextFactory:
                 "--disk-cache-size=1",
                 "--start-maximized",
                 "--kiosk-printing",
+                f"--disable-extensions-except={disable_extensions_except}",
+                f"--load-extension={load_extensions}"
             ],
             "ignore_default_args": [
                 "--enable-automation",
@@ -184,7 +199,18 @@ class BrowserContextFactory:
                 "width": settings.BROWSER_WIDTH,
                 "height": settings.BROWSER_HEIGHT,
             },
+            "user_agent": random.choice(USER_AGENT_STRINGS),
+            "java_script_enabled": True,
         }
+
+        if settings.PROXY_URL:
+            args["proxy"] = {
+                "server": settings.PROXY_URL
+            }
+            args["http_credentials"] = {
+                "username": settings.PROXY_USERNAME,
+                "password": settings.PROXY_PASSWORD,
+            }
 
         if proxy_location:
             if tz_info := get_tzinfo_from_proxy(proxy_location=proxy_location):
@@ -222,6 +248,10 @@ class BrowserContextFactory:
             if not creator:
                 raise UnknownBrowserType(browser_type)
             browser_context, browser_artifacts, cleanup_func = await creator(playwright, **kwargs)
+            # TODO: Hacky way to disable webdriver detection. Need to find a better way to do this
+            await browser_context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
             set_browser_console_log(browser_context=browser_context, browser_artifacts=browser_artifacts)
             set_download_file_listener(browser_context=browser_context, **kwargs)
 
@@ -290,7 +320,7 @@ class BrowserArtifacts(BaseModel):
 async def _create_headless_chromium(
     playwright: Playwright, proxy_location: ProxyLocation | None = None, **kwargs: dict
 ) -> tuple[BrowserContext, BrowserArtifacts, BrowserCleanupFunc]:
-    user_data_dir = make_temp_directory(prefix="skyvern_browser_")
+    user_data_dir = "skyvern-browser-data/"
     download_dir = initialize_download_dir()
     BrowserContextFactory.update_chromium_browser_preferences(
         user_data_dir=user_data_dir,
@@ -312,7 +342,7 @@ async def _create_headless_chromium(
 async def _create_headful_chromium(
     playwright: Playwright, proxy_location: ProxyLocation | None = None, **kwargs: dict
 ) -> tuple[BrowserContext, BrowserArtifacts, BrowserCleanupFunc]:
-    user_data_dir = make_temp_directory(prefix="skyvern_browser_")
+    user_data_dir = "skyvern-browser-data/"
     download_dir = initialize_download_dir()
     BrowserContextFactory.update_chromium_browser_preferences(
         user_data_dir=user_data_dir,

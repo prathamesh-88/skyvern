@@ -720,12 +720,19 @@ async def get_workflow_run(
     current_org: Organization = Depends(org_auth_service.get_current_org),
 ) -> WorkflowRunStatusResponse:
     analytics.capture("skyvern-oss-agent-workflow-run-get")
-    return await app.WORKFLOW_SERVICE.build_workflow_run_status_response(
+    workflow_run_status_response = await app.WORKFLOW_SERVICE.build_workflow_run_status_response(
         workflow_permanent_id=workflow_id,
         workflow_run_id=workflow_run_id,
         organization_id=current_org.organization_id,
         include_cost=True,
     )
+    observer_cruise = await app.DATABASE.get_observer_cruise_by_workflow_run_id(
+        workflow_run_id=workflow_run_id,
+        organization_id=current_org.organization_id,
+    )
+    if observer_cruise:
+        workflow_run_status_response.observer_cruise = observer_cruise
+    return workflow_run_status_response
 
 
 @base_router.get(
@@ -756,7 +763,7 @@ async def get_workflow_run_timeline(
             organization_id=current_org.organization_id,
         )
         workflow_run_block_timeline.extend(observer_thought_timeline)
-    workflow_run_block_timeline.sort(key=lambda x: x.created_at)
+    workflow_run_block_timeline.sort(key=lambda x: x.created_at, reverse=True)
     return workflow_run_block_timeline
 
 

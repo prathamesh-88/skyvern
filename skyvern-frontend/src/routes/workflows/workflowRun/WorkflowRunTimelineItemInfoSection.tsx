@@ -11,8 +11,10 @@ import { CodeEditor } from "../components/CodeEditor";
 import { AutoResizingTextarea } from "@/components/AutoResizingTextarea/AutoResizingTextarea";
 import { WorkflowBlockTypes } from "../types/workflowTypes";
 import { statusIsAFailureType } from "@/routes/tasks/types";
-import { SendEmailBlockInfo } from "./blockInfo/SendEmailBlockInfo";
 import { WorkflowRunOverviewActiveElement } from "./WorkflowRunOverview";
+import { ExternalLinkIcon } from "@radix-ui/react-icons";
+import { Link } from "react-router-dom";
+import { SendEmailBlockParameters } from "./blockInfo/SendEmailBlockInfo";
 
 type Props = {
   activeItem: WorkflowRunOverviewActiveElement;
@@ -72,7 +74,7 @@ function WorkflowRunTimelineItemInfoSection({ activeItem }: Props) {
     ) {
       return (
         <div className="rounded bg-slate-elevation1 p-4">
-          <Tabs key={item.block_type} defaultValue={defaultTab}>
+          <Tabs key={item.task_id ?? item.block_type} defaultValue={defaultTab}>
             <TabsList>
               {item.status === Status.Completed && (
                 <TabsTrigger value="extracted_information">
@@ -84,6 +86,17 @@ function WorkflowRunTimelineItemInfoSection({ activeItem }: Props) {
               )}
               <TabsTrigger value="navigation_goal">Navigation Goal</TabsTrigger>
               <TabsTrigger value="parameters">Parameters</TabsTrigger>
+              {item.task_id && (
+                <Link
+                  to={`/tasks/${item.task_id}/diagnostics`}
+                  title="Go to diagnostics"
+                >
+                  <div className="flex items-center gap-2 px-3 py-1 text-sm font-medium">
+                    <ExternalLinkIcon />
+                    <span>Diagnostics</span>
+                  </div>
+                </Link>
+              )}
             </TabsList>
             {item.status === Status.Completed && (
               <TabsContent value="extracted_information">
@@ -138,10 +151,16 @@ function WorkflowRunTimelineItemInfoSection({ activeItem }: Props) {
         item.body !== null &&
         typeof item.body !== "undefined" &&
         item.recipients !== null &&
-        typeof item.recipients !== "undefined"
+        typeof item.recipients !== "undefined" &&
+        item.subject !== null &&
+        typeof item.subject !== "undefined"
       ) {
         return (
-          <SendEmailBlockInfo body={item.body} recipients={item.recipients} />
+          <SendEmailBlockParameters
+            body={item.body}
+            recipients={item.recipients}
+            subject={item.subject}
+          />
         );
       }
       return null;

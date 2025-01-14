@@ -494,6 +494,7 @@ class WorkflowRunBlockModel(Base):
         String, ForeignKey("workflow_run_blocks.workflow_run_block_id"), nullable=True
     )
     organization_id = Column(String, ForeignKey("organizations.organization_id"), nullable=True)
+    description = Column(String, nullable=True)
     task_id = Column(String, ForeignKey("tasks.task_id"), nullable=True)
     label = Column(String, nullable=True)
     block_type = Column(String, nullable=False)
@@ -569,8 +570,9 @@ class PersistentBrowserSessionModel(Base):
 
     persistent_browser_session_id = Column(String, primary_key=True, default=generate_persistent_browser_session_id)
     organization_id = Column(String, ForeignKey("organizations.organization_id"), nullable=False)
-    runnable_type = Column(String, nullable=False)
-    runnable_id = Column(String, nullable=False)
+    runnable_type = Column(String, nullable=True)
+    runnable_id = Column(String, nullable=True)
+    browser_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     modified_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
     deleted_at = Column(DateTime, nullable=True)
