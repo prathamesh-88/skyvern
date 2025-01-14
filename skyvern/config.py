@@ -146,6 +146,8 @@ class Settings(BaseSettings):
     PROXY_USERNAME: str | None = None
     PROXY_PASSWORD: str | None = None
 
+    USER_DATA_DIR: str | None = None
+
     def is_cloud_environment(self) -> bool:
         """
         :return: True if env is not local, else False
