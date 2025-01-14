@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import os
 import time
 import uuid
@@ -29,6 +30,13 @@ from skyvern.forge.sdk.schemas.tasks import ProxyLocation, get_tzinfo_from_proxy
 from skyvern.webeye.utils.page import SkyvernFrame
 
 LOG = structlog.get_logger()
+
+USER_AGENT_STRINGS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.2227.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.3497.92 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+]
 
 
 BrowserCleanupFunc = Callable[[], None] | None
@@ -172,6 +180,9 @@ class BrowserContextFactory:
             "--disk-cache-size=1",
             "--start-maximized",
             "--kiosk-printing",
+            f"--user-agent={random.choice(USER_AGENT_STRINGS)}",
+            "--disable-extensions-except=./captcha",
+            "--load-extension=./captcha"
         ]
 
         if cdp_port:
@@ -191,6 +202,15 @@ class BrowserContextFactory:
                 "height": settings.BROWSER_HEIGHT,
             },
         }
+
+        # if settings.PROXY_URL:
+        #     args["proxy"] = {
+        #         "server": settings.PROXY_URL
+        #     }
+        #     args["http_credentials"] = {
+        #         "username": settings.PROXY_USERNAME,
+        #         "password": settings.PROXY_PASSWORD,
+        #     }
 
         if proxy_location:
             if tz_info := get_tzinfo_from_proxy(proxy_location=proxy_location):
