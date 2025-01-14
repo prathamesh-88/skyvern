@@ -6,7 +6,7 @@ module.exports = {
         },
         {
             name: "skyvern-server",
-            script: "./run_skyvern.sh"
+            script: "./run_skyvern_prod.sh"
         }
     ],
     deploy: {
