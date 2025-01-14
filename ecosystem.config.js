@@ -13,7 +13,7 @@ module.exports = {
         production: {
             user: "app",
             host: "172.31.89.127",
-            ref: "origin/development",
+            ref: "origin/main",
             repo: "git@github.com:prathamesh-88/skyvern.git",
             path: "/home/app/skyvern",
             ssh_options: ["ForwardAgent=yes"],
