@@ -9,5 +9,5 @@ if [ ! -f .env ]; then
   echo "[ERROR] Please add your api keys to the skyvern-frontend/.env file."
 fi
 
-npm install --silent
+npm install
 npm run start
