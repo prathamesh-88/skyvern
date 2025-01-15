@@ -1,6 +1,4 @@
 #!/usr/bin/bash
-set -e  # Exit on error
-
 kill $(lsof -t -i :8000)
 
 if [ ! -f .env ]; then
@@ -9,4 +7,5 @@ if [ ! -f .env ]; then
 fi
 export DISPLAY=:99
 /home/ubuntu/.local/bin/poetry install
+./run_alembic_check.sh
 /home/ubuntu/.local/bin/poetry run python3 -m skyvern.forge
