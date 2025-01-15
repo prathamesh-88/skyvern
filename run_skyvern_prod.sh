@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/bash
 
 kill $(lsof -t -i :8000)
 
@@ -8,7 +8,7 @@ if [ ! -f .env ]; then
 fi
 ./xvfb_startup.sh
 export DISPLAY=:99
-poetry shell
+source "$(poetry env info --path)/bin/activate"
 poetry install
 ./run_alembic_check.sh
 poetry run python3 -m skyvern.forge
