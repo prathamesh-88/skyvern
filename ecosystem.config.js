@@ -3,12 +3,12 @@ module.exports = {
         {
             name: "skyvern-frontend",
             script: "./run_ui.sh",
-            interpreter: "/bin/bash",
+            interpreter: "/usr/bin/bash",
         },
         {
             name: "skyvern-server",
             script: "./run_skyvern_prod.sh",
-            interpreter: "/bin/bash",
+            interpreter: "/usr/bin/bash",
         }
     ],
     deploy: {
