@@ -2,11 +2,11 @@ module.exports = {
     apps: [
         {
             name: "skyvern-frontend",
-            script: "cd /home/app/skyvern/current && ./run_ui.sh"
+            script: "cd /home/ubuntu/skyvern/current && ./run_ui.sh"
         },
         {
             name: "skyvern-server",
-            script: "cd /home/app/skyvern/current && ./run_skyvern_prod.sh"
+            script: "cd /home/ubuntu/skyvern/current && ./run_skyvern_prod.sh"
         }
     ],
     deploy: {
