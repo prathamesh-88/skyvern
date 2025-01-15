@@ -6,7 +6,7 @@ if [ ! -f .env ]; then
   echo "Please add your api keys to the .env file."
 fi
 export DISPLAY=:99
-/home/ubuntu/.local/bin/poetry shell
+/home/ubuntu/.local/bin/poetry env use /home/ubuntu/.pyenv/shims/python
 /home/ubuntu/.local/bin/poetry install
 ./run_alembic_check.sh
 /home/ubuntu/.local/bin/poetry run python3 -m skyvern.forge
