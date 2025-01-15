@@ -1042,10 +1042,7 @@ files = [
 ]
 
 [package.dependencies]
-bytecode = [
-    {version = ">=0.15.0", markers = "python_version >= \"3.12.0\""},
-    {version = ">=0.14.0", markers = "python_version ~= \"3.11.0\""},
-]
+bytecode = {version = ">=0.14.0", markers = "python_version ~= \"3.11.0\""}
 envier = ">=0.5,<1.0"
 opentelemetry-api = ">=1"
 protobuf = ">=3"
@@ -6187,5 +6184,5 @@ type = ["pytest-mypy"]
 
 [metadata]
 lock-version = "2.0"
-python-versions = "^3.11"
-content-hash = "0ef2a7164dcd0fa567029051f20616fd3d76135492a37b8c9df7fca2e885335f"
+python-versions = "^3.11, <3.12"
+content-hash = "c51b14078ce9e668954779df3854a75e798b678f838c6d23e03118874543ab32"
