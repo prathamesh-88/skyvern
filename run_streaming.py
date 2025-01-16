@@ -18,7 +18,7 @@ async def run() -> None:
     while True:
         # run subprocess to take screenshot
         subprocess.run(
-            f"xwd -root | xwdtopnm 2>/dev/null | pnmtopng > {png_file_path}", shell=True, env={"DISPLAY": ":99"}
+            f"xwd -root | xwdtopnm 2>/dev/null | pnmtopng > {png_file_path}", shell=True, env={"DISPLAY": ":1"}
         )
 
         # FIXME: upload screenshot to S3 with correct organization id

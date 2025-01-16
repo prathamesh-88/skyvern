@@ -5,7 +5,7 @@ if [ ! -f .env ]; then
   cp .env.example .env
   echo "Please add your api keys to the .env file."
 fi
-export DISPLAY=:99
+export DISPLAY=:1
 /home/ubuntu/.local/bin/poetry env use /home/ubuntu/.pyenv/shims/python
 /home/ubuntu/.local/bin/poetry install
 ./run_alembic_check.sh
