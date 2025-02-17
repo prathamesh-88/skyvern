@@ -63,7 +63,8 @@ def get_agent_app() -> FastAPI:
     app = FastAPI()
     scheduler = BackgroundScheduler()
 
-    scheduler.add_job(directory_cleanup_cron, 'interval', minutes=30)
+    # Schedule directory cleanup cron job every day
+    scheduler.add_job(directory_cleanup_cron, 'interval', minutes=1440)
     scheduler.start()
 
     # Add CORS middleware
