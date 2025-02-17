@@ -1,6 +1,9 @@
 import uuid
 from datetime import datetime
 from typing import Awaitable, Callable
+from apscheduler.schedulers.background import BackgroundScheduler
+import shutil
+import os
 
 import structlog
 from fastapi import FastAPI, Response, status
@@ -29,6 +32,28 @@ class ExecutionDatePlugin(Plugin):
     async def process_request(self, request: Request | HTTPConnection) -> datetime:
         return datetime.now()
 
+def directory_cleanup_cron():
+    """
+    Clean up multiple directories by removing them if they exist.
+    """
+    if settings.is_cloud_environment():
+        directories_to_clean = [
+            settings.VIDEO_PATH,
+            settings.TEMP_PATH,
+            settings.HAR_PATH,
+            settings.ARTIFACT_STORAGE_PATH,
+        ]
+        
+        for directory in directories_to_clean:
+            if directory and os.path.exists(directory):
+                try:
+                    shutil.rmtree(directory)
+                    LOG.info("Successfully deleted directory", path=directory)
+                except Exception as e:
+                    LOG.error("Failed to delete directory", path=directory, error=str(e))
+            else:
+                LOG.info("Directory does not exist", path=directory)
+
 
 def get_agent_app() -> FastAPI:
     """
@@ -36,6 +61,11 @@ def get_agent_app() -> FastAPI:
     """
 
     app = FastAPI()
+    scheduler = BackgroundScheduler()
+
+    # Schedule directory cleanup cron job every day
+    scheduler.add_job(directory_cleanup_cron, 'interval', minutes=1440)
+    scheduler.start()
 
     # Add CORS middleware
     app.add_middleware(
