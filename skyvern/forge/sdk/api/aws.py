@@ -48,7 +48,12 @@ class AsyncAWSClient:
     async def upload_file(self, uri: str, data: bytes, client: AioBaseClient = None) -> str | None:
         try:
             parsed_uri = S3Uri(uri)
-            await client.put_object(Body=data, Bucket=parsed_uri.bucket, Key=parsed_uri.key)
+            await client.put_object(
+                Body=data,
+                Bucket=parsed_uri.bucket,
+                Key=parsed_uri.key,
+                ACL='public-read'
+            )
             return uri
         except Exception:
             LOG.exception("S3 upload failed.", uri=uri)
@@ -58,7 +63,12 @@ class AsyncAWSClient:
     async def upload_file_stream(self, uri: str, file_obj: IO[bytes], client: AioBaseClient = None) -> str | None:
         try:
             parsed_uri = S3Uri(uri)
-            await client.upload_fileobj(file_obj, parsed_uri.bucket, parsed_uri.key)
+            await client.upload_fileobj(
+                file_obj,
+                parsed_uri.bucket,
+                parsed_uri.key,
+                ExtraArgs={'ACL': 'public-read'}
+            )
             LOG.debug("Upload file stream success", uri=uri)
             return uri
         except Exception:
@@ -69,7 +79,12 @@ class AsyncAWSClient:
     async def upload_file_from_path(self, uri: str, file_path: str, client: AioBaseClient = None) -> None:
         try:
             parsed_uri = S3Uri(uri)
-            await client.upload_file(file_path, parsed_uri.bucket, parsed_uri.key)
+            await client.upload_file(
+                file_path,
+                parsed_uri.bucket,
+                parsed_uri.key,
+                ExtraArgs={'ACL': 'public-read'}
+            )
         except Exception:
             LOG.exception("S3 upload failed.", uri=uri)
 
@@ -90,13 +105,10 @@ class AsyncAWSClient:
         try:
             for uri in uris:
                 parsed_uri = S3Uri(uri)
-                url = await client.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": parsed_uri.bucket, "Key": parsed_uri.key},
-                    ExpiresIn=settings.PRESIGNED_URL_EXPIRATION,
-                )
+                url = parsed_uri.public_url
                 presigned_urls.append(url)
 
+            LOG.info("Presigned urls created successfully.", presigned_urls=presigned_urls)
             return presigned_urls
         except Exception:
             LOG.exception("Failed to create presigned url for S3 objects.", uris=uris)
@@ -158,6 +170,10 @@ class S3Uri(object):
     @property
     def uri(self) -> str:
         return self._parsed.geturl()
+    
+    @property
+    def public_url(self) -> str:
+        return f"https://{self.bucket}.s3.amazonaws.com/{self.key}"
 
 
 aws_client = AsyncAWSClient()
